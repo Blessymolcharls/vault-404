@@ -122,20 +122,20 @@ async def test_esp32_telemetry_event_decoding_and_fault_tolerance():
     assert dispatched_events[0].event_type == HardwareEventType.RFID_SCANNED
     assert dispatched_events[0].payload["card_uid"] == "E2806894"
 
-    # 2. Valid Fingerprint Matched Event
+    # 2. Valid Keypad Pin Result Event
     adapter._process_incoming_json(
         json.dumps(
             {
-                "event": "FINGERPRINT_MATCHED",
-                "payload": {"finger_id": 1, "matched": True, "confidence": 0.98},
+                "event": "KEYPAD_PIN_RESULT",
+                "payload": {"result": "123456"},
             }
         )
     )
     await asyncio.sleep(0.05)
 
     assert len(dispatched_events) == 2
-    assert dispatched_events[1].event_type == HardwareEventType.FINGERPRINT_MATCHED
-    assert dispatched_events[1].payload["finger_id"] == 1
+    assert dispatched_events[1].event_type == HardwareEventType.KEYPAD_PIN_RESULT
+    assert dispatched_events[1].payload["result"] == "123456"
 
     # 3. Valid Tamper Triggered Event
     adapter._process_incoming_json(
@@ -182,19 +182,26 @@ async def test_virtual_serial_loopback_with_engine():
         json.dumps({"event": "RFID_SCANNED", "payload": {"card_uid": "E2806894"}})
     )
     await asyncio.sleep(0.05)
-    assert engine.state == VaultState.AWAITING_FINGERPRINT
+    assert engine.state == VaultState.AWAITING_FACE
 
-    # 2. ESP32 emits FINGERPRINT_MATCHED -> Engine verifies Stage 2
+    # 2. Simulate API Phone Biometric
+    assert engine.state == VaultState.AWAITING_FACE
+
+    # 3. Simulate API Face
+    await engine.submit_face(face_id="SUBJECT_001_OPERATOR", confidence=0.98, is_live=True)
+    assert engine.state == VaultState.AWAITING_KEYPAD_PIN
+
+    # 4. ESP32 emits KEYPAD_PIN_RESULT -> Engine verifies Stage 4
     adapter._process_incoming_json(
         json.dumps(
             {
-                "event": "FINGERPRINT_MATCHED",
-                "payload": {"finger_id": 1, "matched": True, "confidence": 0.98},
+                "event": "KEYPAD_PIN_RESULT",
+                "payload": {"result": "VaultMasterKey#2026!"},
             }
         )
     )
     await asyncio.sleep(0.05)
-    assert engine.state == VaultState.AWAITING_FACE
+    assert engine.state == VaultState.AWAITING_VOICE
 
     # 3. ESP32 emits TAMPER_TRIGGERED -> Engine immediately locks down to LOCKOUT
     adapter._process_incoming_json(

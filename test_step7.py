@@ -66,7 +66,6 @@ async def test_user_enrollment_and_retrieval(repository: SqliteVaultRepository):
     user = await repository.create_user(
         username="OPERATOR_001",
         rfid_uid="E2806894",
-        fingerprint_id=1,
         password_hash=pwd_hash,
         face_embedding=face_emb,
         voice_print=voice_print,
@@ -76,7 +75,6 @@ async def test_user_enrollment_and_retrieval(repository: SqliteVaultRepository):
     assert user.id is not None
     assert user.username == "OPERATOR_001"
     assert user.rfid_uid == "E2806894"
-    assert user.fingerprint_id == 1
     assert user.is_active is True
 
     # Retrieve by RFID
@@ -117,7 +115,7 @@ async def test_hash_chained_audit_trail_creation(repository: SqliteVaultReposito
     assert log2.previous_hash == log1.entry_hash
 
     log3 = await repository.log_audit_event(
-        stage="AWAITING_FINGERPRINT", event_type="RFID_AUTH_SUCCESS", user_id=1
+        stage="AWAITING_FACE", event_type="RFID_AUTH_SUCCESS", user_id=1
     )
     assert log3.previous_hash == log2.entry_hash
 
@@ -143,7 +141,7 @@ async def test_tamper_detection_on_corrupted_audit_trail(
     # Create 4 audit log entries
     await repository.log_audit_event(stage="IDLE", event_type="BOOT")
     await repository.log_audit_event(stage="AWAITING_RFID", event_type="SCAN_1")
-    await repository.log_audit_event(stage="AWAITING_FINGERPRINT", event_type="FP_2")
+    await repository.log_audit_event(stage="AWAITING_FACE", event_type="FACE_2")
     await repository.log_audit_event(stage="UNLOCKED", event_type="SUCCESS")
 
     # Verify healthy chain
@@ -194,7 +192,6 @@ async def test_engine_database_user_and_audit_logging_e2e(
     enrolled_user = await repository.create_user(
         username="ALICE_AGENT",
         rfid_uid="E2806894",
-        fingerprint_id=1,
         password_hash=pwd_hash,
         face_embedding=face_emb,
         voice_print=voice_print,
@@ -218,26 +215,22 @@ async def test_engine_database_user_and_audit_logging_e2e(
     # Step 1: RFID (Loads user from database)
     assert await engine.submit_rfid("E2806894") is True
     assert engine.active_user_id == enrolled_user.id
-    assert engine.state == VaultState.AWAITING_FINGERPRINT
-
-    # Step 2: Fingerprint
-    assert await engine.submit_fingerprint(1, matched=True, confidence=0.98) is True
     assert engine.state == VaultState.AWAITING_FACE
 
     # Step 3: Face Frame
     live_face = cam.generate_synthetic_face_frame(subject_seed=777, noise_level=0.02)
     assert await engine.submit_face_frame(live_face) is True
-    assert engine.state == VaultState.AWAITING_PASSWORD
+    assert engine.state == VaultState.AWAITING_KEYPAD_PIN
 
     # Step 4: Argon2 Password
-    assert await engine.submit_password("VaultMasterKey#2026!") is True
+    assert await engine.submit_keypad_pin("VaultMasterKey#2026!") is True
     assert engine.state == VaultState.AWAITING_VOICE
 
     # Step 5: Voice Utterance
     live_voice = audio.generate_synthetic_utterance(
-        speaker_seed=1, phrase="OPEN SESAME OVERENGINEERED", noise_level=0.02
+        speaker_seed=1, noise_level=0.02
     )
-    assert await engine.submit_voice_audio(live_voice, spoken_phrase="OPEN SESAME OVERENGINEERED") is True
+    assert await engine.submit_voice_audio(audio_data=live_voice) is True
     assert engine.state == VaultState.UNLOCKED
 
     # Verify physical hardware state
@@ -245,11 +238,11 @@ async def test_engine_database_user_and_audit_logging_e2e(
 
     # Verify Audit Trail in Database
     audit_logs = await repository.get_audit_logs(limit=50)
-    assert len(audit_logs) >= 6
+    assert len(audit_logs) >= 5
 
     # Verify user_id was associated with transition logs
     user_logs = [log for log in audit_logs if log.user_id == enrolled_user.id]
-    assert len(user_logs) >= 5
+    assert len(user_logs) >= 4
 
     # Verify full audit chain integrity
     is_valid, error = await repository.verify_audit_trail_integrity()

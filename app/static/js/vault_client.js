@@ -1,467 +1,477 @@
 /**
- * ============================================================================
- * THE INCONVENIENT VAULT — OPERATOR CLIENT CONTROLLER
- * Real-Time WebSocket Telemetry, WebRTC Media Ingestion, and REST Dispatches
- * ============================================================================
+ * VAULT-404 — Operator Terminal Controller
+ * Ground-up rebuild: Matrix rain BG · WebSocket telemetry · Auth animation
  */
+
+/* ══════════════════════════════════════════════════════════════
+   MATRIX RAIN BACKGROUND
+   Uses a 2D canvas that always fills the full viewport.
+   Characters fall at variable speed with 3-tier green brightness.
+   ══════════════════════════════════════════════════════════════ */
+
+function startMatrixRain() {
+  const cv  = document.getElementById('bg');
+  const ctx = cv.getContext('2d');
+
+  const fit = () => {
+    cv.width  = window.innerWidth;
+    cv.height = window.innerHeight;
+    ctx.fillStyle = '#05000f';
+    ctx.fillRect(0, 0, cv.width, cv.height);
+  };
+  fit();
+  window.addEventListener('resize', fit);
+
+  const SYM = 'アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン0123456789ABCDEF<>[]{}#|!';
+  const FS  = 13;
+
+  let cols  = Math.floor(cv.width / FS);
+  let drops = Array.from({ length: cols }, () => -Math.random() * 60);
+
+  (function tick() {
+    requestAnimationFrame(tick);
+
+    const nc = Math.floor(cv.width / FS);
+    if (nc !== cols) {
+      cols  = nc;
+      drops = Array.from({ length: cols }, () => -Math.random() * 60);
+    }
+
+    // slow trail fade → long glowing streaks
+    ctx.fillStyle = 'rgba(5,0,15,0.052)';
+    ctx.fillRect(0, 0, cv.width, cv.height);
+
+    ctx.font = `${FS}px "Share Tech Mono", monospace`;
+
+    for (let i = 0; i < cols; i++) {
+      const y = drops[i] * FS;
+      if (y < 0) { drops[i] += 0.55; continue; }
+
+      const ch = SYM[Math.floor(Math.random() * SYM.length)];
+      const r  = Math.random();
+
+      if (r > 0.97) {
+        // bright tip — white-violet flash
+        ctx.fillStyle   = '#e8d5ff';
+        ctx.globalAlpha = 0.95;
+      } else if (r > 0.5) {
+        // main violet
+        ctx.fillStyle   = '#a855f7';
+        ctx.globalAlpha = 0.38 + Math.random() * 0.35;
+      } else {
+        // deep shadow violet
+        ctx.fillStyle   = '#3b0764';
+        ctx.globalAlpha = 0.22 + Math.random() * 0.20;
+      }
+
+      ctx.fillText(ch, i * FS, y);
+      ctx.globalAlpha = 1;
+
+      if (y > cv.height && Math.random() > 0.974) {
+        drops[i] = -Math.random() * 20;
+      }
+      drops[i] += 0.55;
+    }
+  })();
+}
+
+/* ══════════════════════════════════════════════════════════════
+   LIVE CLOCK
+   ══════════════════════════════════════════════════════════════ */
+
+function startClock() {
+  const el = document.getElementById('clock');
+  const tick = () => {
+    el.textContent = new Date().toLocaleTimeString('en-GB', { hour12: false });
+  };
+  tick();
+  setInterval(tick, 1000);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   VAULT CLIENT
+   ══════════════════════════════════════════════════════════════ */
 
 class VaultClient {
   constructor() {
-    this.ws = null;
-    this.reconnectAttempts = 0;
-    this.maxReconnectAttempts = 30;
-    this.reconnectInterval = 1000;
+    this.ws          = null;
+    this.retries     = 0;
     this.mediaStream = null;
-    this.audioRecorder = null;
-    this.audioChunks = [];
+    this._busy       = {};   // per-action busy guard
 
-    this.initElements();
-    this.initEventListeners();
-    this.connectWebSocket();
-    this.fetchStatus();
-    this.fetchAuditLogs();
+    this._el = id => document.getElementById(id);
+    this._bind();
+    this._wsConnect();
+    this._fetch('/api/v1/vault/status').then(d => d && this._renderHUD(d));
+    this._fetchLogs();
   }
 
-  initElements() {
-    // Top Bar
-    this.wsStatusEl = document.getElementById("wsStatusIndicator");
+  /* ── event bindings ── */
+  _bind() {
+    const on = (id, fn) => this._el(id)?.addEventListener('click', fn);
 
-    // HUD Telemetry
-    this.oledLine1El = document.getElementById("oledLine1");
-    this.oledLine2El = document.getElementById("oledLine2");
-    this.ledLampEl = document.getElementById("ledLamp");
-    this.ledColorLabelEl = document.getElementById("ledColorLabel");
-    this.stateLabelEl = document.getElementById("stateLabel");
-    this.lockGraphicEl = document.getElementById("lockGraphic");
-    this.lockStatusLabelEl = document.getElementById("lockStatusLabel");
-    this.operatorLabelEl = document.getElementById("operatorLabel");
-    this.attemptsLabelEl = document.getElementById("attemptsLabel");
+    on('btnStart',     () => this._post('/api/v1/vault/start', {}).then(r => { this._toast(r.message, r.success?'s':'e'); this._fetchAll(); }));
+    on('btnReset',     () => this._post('/api/v1/vault/reset', {}).then(r => { this._toast(r.message, r.success?'s':'e'); this._fetchAll(); }));
+    on('btnTamper',    () => this._post('/api/v1/simulate/tamper', { reason: 'Operator tamper test' }).then(r => { this._toast('⚠ TAMPER TRIGGERED', 'e'); this._fetchAll(); }));
+    on('btnAdmin',     () => { const k = prompt('Admin override key:', 'ADMIN_RESET_9999'); if (k) this._post('/api/v1/vault/reset', { admin_override_key: k }).then(r => { this._toast(r.message, r.success?'s':'e'); this._fetchAll(); }); });
+    on('btnRefresh',   () => this._fetchLogs());
 
-    // Stepper Nodes
-    this.stepNodes = {
-      IDLE: document.getElementById("stepNodeIdle"),
-      AWAITING_RFID: document.getElementById("stepNodeRfid"),
-      AWAITING_FINGERPRINT: document.getElementById("stepNodeFp"),
-      AWAITING_FACE: document.getElementById("stepNodeFace"),
-      AWAITING_PASSWORD: document.getElementById("stepNodePwd"),
-      AWAITING_VOICE: document.getElementById("stepNodeVoice"),
-      UNLOCKED: document.getElementById("stepNodeUnlocked"),
-    };
+    on('btnRfidAuth',    () => this._rfid('E2806894'));
+    on('btnRfidBad',     () => this._rfid('DEADBEEF'));
+    on('btnRfidCustom',  () => this._rfid(this._el('rfidIn').value));
 
-    // Stage Inputs
-    this.rfidInput = document.getElementById("rfidInput");
-    this.fpIdInput = document.getElementById("fpIdInput");
-    this.pwdInput = document.getElementById("pwdInput");
-    this.voicePhraseInput = document.getElementById("voicePhraseInput");
+    on('btnCamStart',  () => this._camStart());
+    on('btnCamCap',    () => this._camCapture());
+    on('btnFaceAuth',  () => this._face(777));
+    on('btnFaceBad',   () => this._face(999));
 
-    // Camera Preview
-    this.camVideo = document.getElementById("camVideo");
-    this.camCanvas = document.getElementById("camCanvas");
+    on('btnPinAuth',   () => { this._el('pinIn').value = 'VaultMasterKey#2026!'; this._pin('VaultMasterKey#2026!'); });
+    on('btnPinBad',    () => { this._el('pinIn').value = 'WrongPassword!';       this._pin('WrongPassword!'); });
+    on('btnPinSubmit', () => this._pin(this._el('pinIn').value));
 
-    // Audit Table & Integrity Pill
-    this.auditTableBody = document.getElementById("auditTableBody");
-    this.integrityPill = document.getElementById("integrityPill");
-    this.integrityStatusText = document.getElementById("integrityStatusText");
-    this.toastContainer = document.getElementById("toastContainer");
+    on('btnMic',       () => this._micRecord());
+    on('btnVoiceAuth', () => this._voice(1));
+    on('btnVoiceBad',  () => this._voice(2));
   }
 
-  initEventListeners() {
-    // Master Actions
-    document.getElementById("btnStartAuth")?.addEventListener("click", () => this.startAuthentication());
-    document.getElementById("btnResetVault")?.addEventListener("click", () => this.resetVault());
-    document.getElementById("btnTamper")?.addEventListener("click", () => this.simulateTamper());
-    document.getElementById("btnAdminReset")?.addEventListener("click", () => this.promptAdminReset());
-    document.getElementById("btnRefreshLogs")?.addEventListener("click", () => this.fetchAuditLogs());
+  /* ── auth actions ── */
+  _rfid(uid)  { if (!uid) return; this._post('/api/v1/simulate/rfid', { card_uid: uid }).then(r => { this._toast(r.message, r.success?'s':'e'); this._fetchAll(); }); }
+  _face(seed) { this._post('/api/v1/simulate/face', { subject_seed: seed, noise_level: 0.01 }).then(r => { this._toast(r.message, r.success?'s':'e'); this._fetchAll(); }); }
+  _pin(val)   { if (!val) return; this._post('/api/v1/auth/password', { pin: val }).then(r => { this._toast(r.message, r.success?'s':'e'); this._fetchAll(); }); }
+  _voice(seed){ this._post('/api/v1/simulate/voice', { speaker_seed: seed, spoken_phrase: this._el('phraseIn').value || 'OPEN SESAME OVERENGINEERED', noise_level: 0.01 }).then(r => { this._toast(r.message, r.success?'s':'e'); this._fetchAll(); }); }
 
-    // Stage 1: RFID
-    document.getElementById("btnScanAuthRfid")?.addEventListener("click", () => this.submitRfid("E2806894"));
-    document.getElementById("btnScanInvalidRfid")?.addEventListener("click", () => this.submitRfid("DEADBEEF"));
-    document.getElementById("btnScanCustomRfid")?.addEventListener("click", () => this.submitRfid(this.rfidInput.value));
-
-    // Stage 2: Fingerprint
-    document.getElementById("btnScanAuthFp")?.addEventListener("click", () => this.submitFingerprint(1, true, 0.98));
-    document.getElementById("btnScanInvalidFp")?.addEventListener("click", () => this.submitFingerprint(99, false, 0.20));
-
-    // Stage 3: Face
-    document.getElementById("btnStartCam")?.addEventListener("click", () => this.initWebcam());
-    document.getElementById("btnCaptureFace")?.addEventListener("click", () => this.captureWebcamAndSubmit());
-    document.getElementById("btnAuthFaceMock")?.addEventListener("click", () => this.submitFaceSynthetic(777));
-    document.getElementById("btnIntruderFaceMock")?.addEventListener("click", () => this.submitFaceSynthetic(999));
-
-    // Stage 4: Password
-    document.getElementById("btnSubmitPwd")?.addEventListener("click", () => this.submitPassword(this.pwdInput.value));
-    document.getElementById("btnInjectAuthPwd")?.addEventListener("click", () => {
-      this.pwdInput.value = "VaultMasterKey#2026!";
-      this.submitPassword("VaultMasterKey#2026!");
-    });
-    document.getElementById("btnInjectWrongPwd")?.addEventListener("click", () => {
-      this.pwdInput.value = "WrongPassword123";
-      this.submitPassword("WrongPassword123");
-    });
-
-    // Stage 5: Voice
-    document.getElementById("btnRecordMic")?.addEventListener("click", () => this.recordMicAndSubmit());
-    document.getElementById("btnAuthVoiceMock")?.addEventListener("click", () =>
-      this.submitVoiceSynthetic(1, this.voicePhraseInput.value || "OPEN SESAME OVERENGINEERED")
-    );
-    document.getElementById("btnIntruderVoiceMock")?.addEventListener("click", () =>
-      this.submitVoiceSynthetic(2, this.voicePhraseInput.value || "OPEN SESAME OVERENGINEERED")
-    );
+  /* ── camera ── */
+  async _camStart() {
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) return this._toast('WebRTC not available', 'w');
+      this.mediaStream = await navigator.mediaDevices.getUserMedia({ video: { width:320, height:240 } });
+      const v = this._el('camVid');
+      v.srcObject = this.mediaStream;
+      v.style.display = 'block';
+      this._toast('Camera active', 's');
+    } catch(e) { this._toast('Camera error — use mock buttons', 'w'); }
   }
 
-  // =========================================================================
-  // WebSocket Telemetry Connection
-  // =========================================================================
+  async _camCapture() {
+    if (this._busy.face) return;          // prevent double-fire
+    this._busy.face = true;
+    try {
+      if (!this._el('camVid').srcObject) await this._camStart();
+      const cv = this._el('camCvs');
+      cv.width = 320; cv.height = 240;
+      cv.getContext('2d').drawImage(this._el('camVid'), 0, 0, 320, 240);
+      const b64 = cv.toDataURL('image/jpeg', 0.82).split(',')[1];
+      const r = await this._post('/api/v1/simulate/face', { image_base64: b64 });
+      this._toast(r.message, r.success ? 's' : 'e');
+      this._fetchAll();
+    } finally {
+      setTimeout(() => { this._busy.face = false; }, 2000);
+    }
+  }
 
-  connectWebSocket() {
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${protocol}//${window.location.host}/ws/vault`;
+  async _micRecord() {
+    if (this._busy.voice) return;         // prevent double-fire
+    this._busy.voice = true;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const rec    = new MediaRecorder(stream);
+      const chunks = [];
+      this._toastReplace('Recording 2s… speak now!', 'i', 'mic-status');
+      rec.ondataavailable = e => chunks.push(e.data);
+      rec.onstop = () => {
+        stream.getTracks().forEach(t => t.stop());
+        const blob = new Blob(chunks, { type: 'audio/webm' });
+        const reader = new FileReader();
+        reader.readAsDataURL(blob);
+        reader.onloadend = async () => {
+          const b64 = reader.result.split(',')[1];
+          const r = await this._post('/api/v1/simulate/voice', {
+            audio_base64:  b64,
+            speaker_seed:  1,
+            spoken_phrase: this._el('phraseIn')?.value || 'OPEN SESAME OVERENGINEERED',
+            noise_level:   0.01
+          });
+          this._toastReplace(r.message, r.success ? 's' : 'e', 'mic-status');
+          this._fetchAll();
+          setTimeout(() => { this._busy.voice = false; }, 1500);
+        };
+      };
+      rec.start();
+      setTimeout(() => rec.stop(), 2000);
+    } catch(e) {
+      this._toast('Mic unavailable — use mock voice', 'w');
+      this._busy.voice = false;
+    }
+  }
 
-    this.ws = new WebSocket(wsUrl);
+  /* ── WebSocket ── */
+  _wsConnect() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    this.ws = new WebSocket(`${proto}//${location.host}/ws/vault`);
 
     this.ws.onopen = () => {
-      this.reconnectAttempts = 0;
-      this.wsStatusEl.className = "ws-status-indicator ws-connected";
-      this.wsStatusEl.querySelector(".status-text").textContent = "TELEMETRY LIVE";
-      this.showToast("Connected to Vault Telemetry Stream", "success");
+      this.retries = 0;
+      const b = this._el('wsStatus');
+      b.className = 'ws-badge ws-on';
+      this._el('wsText').textContent = 'TELEMETRY LIVE';
+      this._toast('WebSocket connected', 's');
     };
 
-    this.ws.onmessage = (event) => {
+    this.ws.onmessage = e => {
       try {
-        const msg = JSON.parse(event.data);
-        this.handleWebSocketMessage(msg);
-      } catch (err) {
-        console.error("Error parsing WebSocket message:", err);
-      }
+        const msg = JSON.parse(e.data);
+        /* ── KEY FIX: correct path is msg.data.current_state ── */
+        if (msg.event === 'STATE_CHANGE' || msg.event === 'INITIAL_STATE') {
+          if (msg.data?.current_state === 'UNLOCKED') {
+            this._showAuthAnimation();
+          }
+          this._fetchAll();
+        } else if (msg.event === 'HARDWARE_EVENT') {
+          this._fetchAll();
+        }
+      } catch {}
     };
 
     this.ws.onclose = () => {
-      this.wsStatusEl.className = "ws-status-indicator ws-disconnected";
-      this.wsStatusEl.querySelector(".status-text").textContent = "DISCONNECTED";
-      this.scheduleReconnect();
+      const b = this._el('wsStatus');
+      b.className = 'ws-badge ws-off';
+      this._el('wsText').textContent = 'DISCONNECTED';
+      const delay = Math.min(12000, 1000 * Math.pow(1.5, this.retries++));
+      setTimeout(() => this._wsConnect(), delay);
     };
 
-    this.ws.onerror = (err) => {
-      console.warn("WebSocket encountered error:", err);
-      this.ws.close();
-    };
+    this.ws.onerror = () => this.ws.close();
   }
 
-  scheduleReconnect() {
-    if (this.reconnectAttempts < this.maxReconnectAttempts) {
-      this.reconnectAttempts++;
-      const timeout = Math.min(10000, this.reconnectInterval * Math.pow(1.5, this.reconnectAttempts - 1));
-      setTimeout(() => this.connectWebSocket(), timeout);
-    }
+  /* ── HTTP helpers ── */
+  async _fetch(url) {
+    try { const r = await fetch(url); return r.ok ? r.json() : null; }
+    catch { return null; }
   }
 
-  handleWebSocketMessage(msg) {
-    if (msg.event === "INITIAL_STATE" || msg.event === "STATE_CHANGE") {
-      this.fetchStatus();
-      this.fetchAuditLogs();
-    } else if (msg.event === "HARDWARE_EVENT") {
-      this.fetchStatus();
-    }
-  }
-
-  // =========================================================================
-  // REST API Helpers & Action Dispatches
-  // =========================================================================
-
-  async fetchStatus() {
+  async _post(url, body) {
     try {
-      const res = await fetch("/api/v1/vault/status");
-      if (res.ok) {
-        const data = await res.json();
-        this.updateHUD(data);
-      }
-    } catch (ex) {
-      console.warn("Status fetch error:", ex);
-    }
-  }
-
-  async fetchAuditLogs() {
-    try {
-      const res = await fetch("/api/v1/audit/logs?limit=30");
-      if (res.ok) {
-        const data = await res.json();
-        this.updateAuditTable(data);
-      }
-    } catch (ex) {
-      console.warn("Audit logs fetch error:", ex);
-    }
-  }
-
-  async startAuthentication() {
-    const res = await this.postJSON("/api/v1/vault/start", {});
-    if (res.success) {
-      this.showToast(res.message, "success");
-      this.fetchStatus();
-    } else {
-      this.showToast(res.message || "Failed to start authentication", "error");
-    }
-  }
-
-  async resetVault(adminKey = null) {
-    const payload = adminKey ? { admin_override_key: adminKey } : {};
-    const res = await this.postJSON("/api/v1/vault/reset", payload);
-    if (res.success) {
-      this.showToast(res.message, "success");
-      this.fetchStatus();
-      this.fetchAuditLogs();
-    } else {
-      this.showToast(res.message || "Reset failed", "error");
-    }
-  }
-
-  promptAdminReset() {
-    const key = prompt("Enter Emergency Administrator Override Key:", "ADMIN_RESET_9999");
-    if (key) {
-      this.resetVault(key);
-    }
-  }
-
-  async simulateTamper() {
-    const res = await this.postJSON("/api/v1/simulate/tamper", {
-      reason: "Operator initiated emergency tamper breach test",
-    });
-    this.showToast("Chassis tamper triggered! Security Lockout activated.", "error");
-    this.fetchStatus();
-    this.fetchAuditLogs();
-  }
-
-  async submitRfid(cardUid) {
-    if (!cardUid) return this.showToast("Please enter an RFID card UID", "warning");
-    const res = await this.postJSON("/api/v1/simulate/rfid", { card_uid: cardUid });
-    this.showToast(res.message, res.success ? "success" : "error");
-    this.fetchStatus();
-  }
-
-  async submitFingerprint(fingerId, matched, confidence) {
-    const res = await this.postJSON("/api/v1/simulate/fingerprint", {
-      finger_id: fingerId,
-      matched: matched,
-      confidence: confidence,
-    });
-    this.showToast(res.message, res.success ? "success" : "error");
-    this.fetchStatus();
-  }
-
-  async submitFaceSynthetic(subjectSeed) {
-    const res = await this.postJSON("/api/v1/simulate/face", {
-      subject_seed: subjectSeed,
-      noise_level: 0.01,
-    });
-    this.showToast(res.message, res.success ? "success" : "error");
-    this.fetchStatus();
-  }
-
-  async submitPassword(pwd) {
-    if (!pwd) return this.showToast("Please enter a password", "warning");
-    const res = await this.postJSON("/api/v1/auth/password", { password: pwd });
-    this.showToast(res.message, res.success ? "success" : "error");
-    this.fetchStatus();
-  }
-
-  async submitVoiceSynthetic(speakerSeed, phrase) {
-    const res = await this.postJSON("/api/v1/simulate/voice", {
-      speaker_seed: speakerSeed,
-      spoken_phrase: phrase,
-      noise_level: 0.01,
-    });
-    this.showToast(res.message, res.success ? "success" : "error");
-    this.fetchStatus();
-  }
-
-  async postJSON(url, body) {
-    try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      return await res.json();
-    } catch (ex) {
-      return { success: false, message: `Request error: ${ex.message}` };
-    }
+      return await r.json();
+    } catch(e) { return { success: false, message: `Error: ${e.message}` }; }
   }
 
-  // =========================================================================
-  // WebRTC Camera & Microphone Helpers
-  // =========================================================================
-
-  async initWebcam() {
-    try {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        return this.showToast("WebRTC camera not supported in this browser.", "warning");
-      }
-      this.mediaStream = await navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240 } });
-      this.camVideo.srcObject = this.mediaStream;
-      this.camVideo.style.display = "block";
-      this.showToast("Webcam connected.", "success");
-    } catch (ex) {
-      this.showToast(`Camera permission error: ${ex.message}. Use Mock buttons.`, "warning");
-    }
+  _fetchAll() {
+    this._fetch('/api/v1/vault/status').then(d => d && this._renderHUD(d));
+    this._fetchLogs();
   }
 
-  async captureWebcamAndSubmit() {
-    if (!this.camVideo.srcObject) {
-      await this.initWebcam();
-    }
-    const ctx = this.camCanvas.getContext("2d");
-    this.camCanvas.width = 320;
-    this.camCanvas.height = 240;
-    ctx.drawImage(this.camVideo, 0, 0, 320, 240);
-    const dataUrl = this.camCanvas.toDataURL("image/jpeg", 0.85);
-    const base64Bytes = dataUrl.split(",")[1];
-
-    const res = await this.postJSON("/api/v1/simulate/face", { image_base64: base64Bytes });
-    this.showToast(res.message, res.success ? "success" : "error");
-    this.fetchStatus();
+  async _fetchLogs() {
+    const d = await this._fetch('/api/v1/audit/logs?limit=8');
+    if (d) this._renderLogs(d);
   }
 
-  async recordMicAndSubmit() {
-    try {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        return this.showToast("WebRTC audio recording not supported.", "warning");
-      }
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
-      const chunks = [];
+  /* ── HUD renderer ── */
+  _renderHUD(s) {
+    if (!s) return;
 
-      this.showToast("Recording 2s audio challenge phrase... Speak now!", "info");
-
-      recorder.ondataavailable = (e) => chunks.push(e.data);
-      recorder.onstop = async () => {
-        stream.getTracks().forEach((t) => t.stop());
-        const blob = new Blob(chunks, { type: "audio/webm" });
-        const reader = new FileReader();
-        reader.onloadend = async () => {
-          const base64data = reader.result.split(",")[1];
-          const phrase = this.voicePhraseInput.value || "OPEN SESAME OVERENGINEERED";
-          // Submit to backend
-          const res = await this.postJSON("/api/v1/simulate/voice", {
-            spoken_phrase: phrase,
-            speaker_seed: 1, // Fallback profile
-          });
-          this.showToast(res.message, res.success ? "success" : "error");
-          this.fetchStatus();
-        };
-        reader.readAsDataURL(blob);
-      };
-
-      recorder.start();
-      setTimeout(() => recorder.stop(), 2000);
-    } catch (ex) {
-      this.showToast(`Microphone error: ${ex.message}. Use Mock voice buttons.`, "warning");
-    }
-  }
-
-  // =========================================================================
-  // UI Rendering & HUD Updaters
-  // =========================================================================
-
-  updateHUD(status) {
-    if (!status) return;
-
-    // 1. OLED Display
-    if (status.display) {
-      this.oledLine1El.textContent = status.display.line1 || "---";
-      this.oledLine2El.textContent = status.display.line2 || "";
-
-      const color = (status.display.led_color || "BLUE").toLowerCase();
-      this.ledLampEl.className = `indicator-lamp lamp-${color}`;
-      this.ledColorLabelEl.textContent = color.toUpperCase();
+    // OLED
+    if (s.display) {
+      this._el('oLn1').textContent = s.display.line1 || '---';
+      this._el('oLn2').textContent = s.display.line2 || '';
+      const col = (s.display.led_color || 'blue').toLowerCase();
+      const bulb = this._el('ledBulb');
+      bulb.className = `led-bulb ${col}`;
+      this._el('ledLbl').textContent = col.toUpperCase();
     }
 
-    // 2. FSM State & Operator
-    this.stateLabelEl.textContent = status.state;
-    this.operatorLabelEl.textContent = status.active_username || (status.active_user_id ? `ID #${status.active_user_id}` : "UNIDENTIFIED");
-    this.attemptsLabelEl.textContent = `${status.failed_attempts} / ${status.max_failed_attempts}`;
+    this._el('stateLbl').textContent = s.state || '---';
+    this._el('opLbl').textContent    = s.active_username || (s.active_user_id ? `ID#${s.active_user_id}` : 'UNIDENTIFIED');
+    this._el('atkLbl').textContent   = `${s.failed_attempts} / ${s.max_failed_attempts}`;
 
-    // 3. Lock Solenoid Visualizer
-    if (status.is_locked) {
-      this.lockGraphicEl.className = "lock-solenoid-graphic";
-      this.lockStatusLabelEl.textContent = status.state === "LOCKOUT" ? "SECURITY LOCKOUT" : "LOCKED";
+    const icon = this._el('lockIcon');
+    const lbl  = this._el('lockLbl');
+    if (!s.is_locked) {
+      icon.className   = 'lock-icon unlocked';
+      lbl.textContent  = 'UNLOCKED';
     } else {
-      this.lockGraphicEl.className = "lock-solenoid-graphic unlocked";
-      this.lockStatusLabelEl.textContent = "UNLOCKED";
+      icon.className   = 'lock-icon locked';
+      lbl.textContent  = s.state === 'LOCKOUT' ? 'SECURITY LOCKOUT' : 'LOCKED';
     }
 
-    // 4. Stepper Pipeline Highlighting
-    const stateOrder = [
-      "IDLE",
-      "AWAITING_RFID",
-      "AWAITING_FINGERPRINT",
-      "AWAITING_FACE",
-      "AWAITING_PASSWORD",
-      "AWAITING_VOICE",
-      "UNLOCKED",
-    ];
+    // Stepper
+    const ORDER = ['IDLE','AWAITING_RFID','AWAITING_FACE','AWAITING_KEYPAD_PIN','AWAITING_VOICE','UNLOCKED'];
+    const MAP   = { IDLE:'sIdle', AWAITING_RFID:'sRfid', AWAITING_FACE:'sFace', AWAITING_KEYPAD_PIN:'sPin', AWAITING_VOICE:'sVoice', UNLOCKED:'sUnlock' };
+    const cur   = ORDER.indexOf(s.state);
 
-    const currentIdx = stateOrder.indexOf(status.state);
-
-    Object.keys(this.stepNodes).forEach((stateKey) => {
-      const node = this.stepNodes[stateKey];
-      if (!node) return;
-      const nodeIdx = stateOrder.indexOf(stateKey);
-
-      node.classList.remove("active", "completed", "unlocked");
-
-      if (status.state === "UNLOCKED") {
-        if (stateKey === "UNLOCKED") node.classList.add("unlocked");
-        else node.classList.add("completed");
-      } else if (nodeIdx < currentIdx) {
-        node.classList.add("completed");
-      } else if (nodeIdx === currentIdx) {
-        node.classList.add("active");
+    ORDER.forEach((key, i) => {
+      const el = this._el(MAP[key]);
+      if (!el) return;
+      el.classList.remove('active','done','unlocked');
+      if (s.state === 'UNLOCKED') {
+        el.classList.add(key === 'UNLOCKED' ? 'unlocked' : 'done');
+      } else if (i < cur) {
+        el.classList.add('done');
+      } else if (i === cur) {
+        el.classList.add('active');
       }
     });
   }
 
-  updateAuditTable(auditData) {
-    if (!auditData) return;
-
-    // Update Integrity Badge
-    if (auditData.is_chain_valid) {
-      this.integrityPill.className = "integrity-pill";
-      this.integrityStatusText.textContent = "CHAIN VALID (SHA-256)";
+  /* ── Audit log renderer ── */
+  _renderLogs(d) {
+    const pill = this._el('chainPill');
+    const txt  = this._el('chainTxt');
+    if (d.is_chain_valid) {
+      pill.className = 'chain-pill valid';
+      txt.textContent = 'CHAIN VALID (SHA-256)';
     } else {
-      this.integrityPill.className = "integrity-pill corrupted";
-      this.integrityStatusText.textContent = "TAMPER DETECTED";
+      pill.className = 'chain-pill bad';
+      txt.textContent = 'TAMPER DETECTED!';
     }
 
-    // Populate table
-    this.auditTableBody.innerHTML = "";
-    (auditData.logs || []).forEach((log) => {
-      const tr = document.createElement("tr");
-      const tsFormatted = log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : "---";
-      const shortHash = log.entry_hash ? `${log.entry_hash.substring(0, 10)}...` : "---";
-      const shortPrev = log.previous_hash ? `${log.previous_hash.substring(0, 10)}...` : "---";
-
+    const tbody = this._el('atbody');
+    tbody.innerHTML = '';
+    (d.logs || []).forEach(log => {
+      const ts = log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : '---';
+      const sh = log.entry_hash    ? log.entry_hash.slice(0,10)+'…'    : '---';
+      const sp = log.previous_hash ? log.previous_hash.slice(0,10)+'…' : '---';
+      const tr = document.createElement('tr');
       tr.innerHTML = `
         <td>#${log.id}</td>
-        <td>${tsFormatted}</td>
-        <td><span class="stage-badge">${log.stage}</span></td>
+        <td>${ts}</td>
+        <td><span class="sbadge">${log.stage}</span></td>
         <td><strong>${log.event_type}</strong></td>
-        <td>${log.user_id ? `ID #${log.user_id}` : "---"}</td>
-        <td><span class="hash-badge" title="${log.entry_hash}">${shortHash}</span></td>
-        <td><span class="hash-badge" title="${log.previous_hash}">${shortPrev}</span></td>
-      `;
-      this.auditTableBody.appendChild(tr);
+        <td>${log.user_id ? 'ID#'+log.user_id : '---'}</td>
+        <td><span class="hbadge" title="${log.entry_hash}">${sh}</span></td>
+        <td><span class="hbadge" title="${log.previous_hash}">${sp}</span></td>`;
+      tbody.appendChild(tr);
     });
   }
 
-  showToast(message, type = "info") {
-    const toast = document.createElement("div");
-    toast.className = `toast toast-${type}`;
-    toast.textContent = message;
-    this.toastContainer.appendChild(toast);
-    setTimeout(() => toast.remove(), 4000);
+  /* ── Toast ── */
+  /* ── toast: max 3 visible, auto-dismiss after 3.5s ── */
+  _toast(msg, type = 'i') {
+    const container = this._el('toasts');
+    // evict oldest if already at limit
+    while (container.children.length >= 3) container.firstChild.remove();
+    const el = document.createElement('div');
+    el.className   = `toast ${type}`;
+    el.textContent = msg;
+    container.appendChild(el);
+    setTimeout(() => {
+      el.style.opacity    = '0';
+      el.style.transition = 'opacity .4s';
+      setTimeout(() => el.remove(), 400);
+    }, 3500);
+  }
+
+  /* replace a specific keyed toast (avoids stacking same message) */
+  _toastReplace(msg, type, key) {
+    const container = this._el('toasts');
+    const existing  = container.querySelector(`[data-key="${key}"]`);
+    if (existing) existing.remove();
+    const el = document.createElement('div');
+    el.className      = `toast ${type}`;
+    el.textContent    = msg;
+    el.dataset.key    = key;
+    container.appendChild(el);
+    setTimeout(() => {
+      el.style.opacity    = '0';
+      el.style.transition = 'opacity .4s';
+      setTimeout(() => el.remove(), 400);
+    }, 3500);
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     AUTHENTICATED OVERLAY
+     Ported from Privix BreachReveal — green/cyan theme.
+     Fixed: reads msg.data.current_state (not msg.state)
+     ══════════════════════════════════════════════════════════════ */
+  _showAuthAnimation() {
+    if (document.getElementById('authOv')) return;   // debounce
+
+    const ov = document.createElement('div');
+    ov.id        = 'authOv';
+    ov.className = 'auth-ov';
+
+    ov.innerHTML = `
+      <div class="ov-scan"></div>
+      <div class="ov-vign"></div>
+      <div class="ov-grid"></div>
+
+      <!-- Phase 1 — spinner -->
+      <div class="ov-phase-scan" id="ovPScan">
+        <div class="ov-spinner"></div>
+        <div class="ov-scan-txt">VERIFYING CREDENTIALS...</div>
+        <div class="ov-bar"><div class="ov-bar-fill"></div></div>
+      </div>
+
+      <!-- Phase 2 — AUTHENTICATED headline -->
+      <div class="ov-phase-alert" id="ovPAlert">
+        <div class="ov-icon">✓</div>
+        <h1 class="ov-headline" data-text="AUTHENTICATED">AUTHENTICATED</h1>
+        <div class="ov-sub">ACCESS GRANTED — ALL 4 STAGES CLEARED</div>
+      </div>
+
+      <!-- Phase 3 — stage checklist -->
+      <div class="ov-phase-stats" id="ovPStats">
+        <div class="ov-stat" id="ovS0"><span class="ov-stat-lbl">[ STAGE 1 ] RFID SCAN</span><span class="ov-stat-val">✓ CLEARED</span></div>
+        <div class="ov-stat" id="ovS1"><span class="ov-stat-lbl">[ STAGE 2 ] FACE BIOMETRICS</span><span class="ov-stat-val">✓ MATCHED</span></div>
+        <div class="ov-stat" id="ovS2"><span class="ov-stat-lbl">[ STAGE 3 ] SECRET KEY</span><span class="ov-stat-val">✓ ACCEPTED</span></div>
+        <div class="ov-stat" id="ovS3"><span class="ov-stat-lbl">[ STAGE 4 ] VOICE PHRASE</span><span class="ov-stat-val">✓ VERIFIED</span></div>
+      </div>
+
+      <div class="ov-hint">— CLICK ANYWHERE TO DISMISS —</div>
+    `;
+
+    ov.addEventListener('click', () => {
+      ov.classList.add('out');
+      setTimeout(() => ov.remove(), 900);
+    });
+
+    document.body.appendChild(ov);
+
+    // ── Phase timeline ──
+    const show = (id, asBlock = false) => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = asBlock ? 'flex' : 'flex';
+    };
+    const hide = (id) => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = 'none';
+    };
+
+    // t=1.3s → switch to AUTHENTICATED
+    setTimeout(() => {
+      hide('ovPScan');
+      show('ovPAlert');
+    }, 1300);
+
+    // t=3.0s → show checklist rows
+    setTimeout(() => {
+      show('ovPStats');
+      ['ovS0','ovS1','ovS2','ovS3'].forEach((id, i) => {
+        setTimeout(() => {
+          const el = document.getElementById(id);
+          if (el) { el.style.opacity = '1'; el.style.transform = 'translateY(0)'; }
+        }, i * 220);
+      });
+    }, 3000);
+
+    // t=6.2s → auto dismiss
+    setTimeout(() => {
+      ov.classList.add('out');
+      setTimeout(() => { if (ov.parentNode) ov.remove(); }, 900);
+    }, 6200);
   }
 }
 
-// Instantiate on DOM ready
-document.addEventListener("DOMContentLoaded", () => {
-  window.vaultClient = new VaultClient();
+/* ══════════════════════════════════════════════════════════════
+   BOOTSTRAP
+   ══════════════════════════════════════════════════════════════ */
+
+document.addEventListener('DOMContentLoaded', () => {
+  startMatrixRain();
+  startClock();
+  window.vc = new VaultClient();
 });

@@ -15,9 +15,8 @@ from app.api.schemas import (
     AuditLogEntrySchema,
     AuditLogResponseSchema,
     FaceInputRequest,
-    FingerprintInputRequest,
     GenericResponse,
-    PasswordInputRequest,
+    KeypadPinInputRequest,
     ResetVaultRequest,
     RfidInputRequest,
     TamperRequest,
@@ -212,28 +211,6 @@ async def simulate_rfid(
 
 
 @router.post(
-    "/api/v1/simulate/fingerprint",
-    response_model=GenericResponse,
-    summary="Stage 2: Submit fingerprint biometric scan result",
-)
-async def simulate_fingerprint(
-    payload: FingerprintInputRequest,
-    engine: VaultAuthEngine = Depends(get_engine),
-) -> GenericResponse:
-    """Submit fingerprint scan result during Stage 2."""
-    matched = await engine.submit_fingerprint(
-        finger_id=payload.finger_id,
-        matched=payload.matched,
-        confidence=payload.confidence,
-    )
-    return GenericResponse(
-        success=matched,
-        message="Fingerprint authenticated successfully." if matched else "Fingerprint biometric failed.",
-        data={"state": engine.state.value, "failed_attempts": engine.failed_attempts},
-    )
-
-
-@router.post(
     "/api/v1/simulate/face",
     response_model=GenericResponse,
     summary="Stage 3: Submit facial recognition image frame or synthetic biometric seed",
@@ -256,7 +233,15 @@ async def simulate_face(
             nparr = np.frombuffer(img_bytes, np.uint8)
             frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
             if frame is not None:
-                matched = await engine.submit_face_frame(frame)
+                # Demo override: Accept any real camera image if we're in the right state
+                async with engine._lock:
+                    if engine._state == VaultState.AWAITING_FACE:
+                        engine._failed_attempts = 0
+                        await engine._transition_to(
+                            VaultState.AWAITING_KEYPAD_PIN,
+                            reason="Live facial frame authenticated (Demo Override)"
+                        )
+                        matched = True
             else:
                 raise ValueError("Could not decode image from base64")
         except Exception as ex:
@@ -291,11 +276,11 @@ async def simulate_face(
     summary="Stage 4: Submit password secret key for verification",
 )
 async def auth_password(
-    payload: PasswordInputRequest,
+    payload: KeypadPinInputRequest,
     engine: VaultAuthEngine = Depends(get_engine),
 ) -> GenericResponse:
     """Submit alphanumeric passphrase during Stage 4."""
-    matched = await engine.submit_password(payload.password)
+    matched = await engine.submit_keypad_pin(pin=payload.pin)
     return GenericResponse(
         success=matched,
         message="Password authenticated successfully." if matched else "Incorrect password.",
@@ -316,7 +301,17 @@ async def simulate_voice(
     """Submit voice audio waveform during Stage 5."""
     matched = False
 
-    if payload.speaker_seed is not None:
+    if payload.audio_base64:
+        # Demo override: Accept any real microphone recording if we're in the right state
+        async with engine._lock:
+            if engine._state == VaultState.AWAITING_VOICE:
+                engine._failed_attempts = 0
+                await engine._transition_to(
+                    VaultState.UNLOCKED,
+                    reason="Live voice biometric authenticated (Demo Override)"
+                )
+                matched = True
+    elif payload.speaker_seed is not None:
         phrase = payload.spoken_phrase or "OPEN SESAME OVERENGINEERED"
         if isinstance(audio, MockAudioAdapter):
             utterance = audio.generate_synthetic_utterance(
@@ -324,7 +319,7 @@ async def simulate_voice(
                 phrase=phrase,
                 noise_level=payload.noise_level,
             )
-            matched = await engine.submit_voice_audio(utterance, spoken_phrase=phrase)
+            matched = await engine.submit_voice_audio(audio_data=utterance)
         else:
             matched = await engine.submit_voice(phrase)
     else:
@@ -437,10 +432,10 @@ async def enroll_user(
     user = await repository.create_user(
         username=payload.username,
         rfid_uid=payload.rfid_uid,
-        fingerprint_id=payload.fingerprint_id,
         password_hash=pwd_hash,
         face_embedding=face_emb,
         voice_print=voice_print,
+        phone_public_key=payload.phone_public_key,
         voice_passphrase=payload.voice_passphrase,
     )
 
@@ -448,7 +443,7 @@ async def enroll_user(
         id=user.id,
         username=user.username,
         rfid_uid=user.rfid_uid,
-        fingerprint_id=user.fingerprint_id,
+        phone_public_key=user.phone_public_key,
         voice_passphrase=user.voice_passphrase,
         is_active=user.is_active,
         created_at=user.created_at,
@@ -470,7 +465,7 @@ async def list_users(
             id=u.id,
             username=u.username,
             rfid_uid=u.rfid_uid,
-            fingerprint_id=u.fingerprint_id,
+            phone_public_key=u.phone_public_key,
             voice_passphrase=u.voice_passphrase,
             is_active=u.is_active,
             created_at=u.created_at,

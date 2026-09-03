@@ -52,10 +52,10 @@ class SqliteVaultRepository(VaultRepositoryInterface):
         self,
         username: str,
         rfid_uid: str,
-        fingerprint_id: int,
         password_hash: str,
         face_embedding: Union[List[float], np.ndarray],
         voice_print: Union[List[float], np.ndarray],
+        phone_public_key: Optional[str] = None,
         voice_passphrase: str = "OPEN SESAME OVERENGINEERED",
     ) -> User:
         """Enroll and persist a new user record."""
@@ -73,8 +73,8 @@ class SqliteVaultRepository(VaultRepositoryInterface):
         user = User(
             username=username.strip(),
             rfid_uid=rfid_uid.strip().upper(),
-            fingerprint_id=fingerprint_id,
             password_hash=password_hash,
+            phone_public_key=phone_public_key,
             face_embedding_json=json.dumps(face_list),
             voice_print_json=json.dumps(voice_list),
             voice_passphrase=voice_passphrase.strip().upper(),

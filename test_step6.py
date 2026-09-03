@@ -67,12 +67,12 @@ def test_mock_audio_adapter_lifecycle(mock_audio: MockAudioAdapter):
 
 def test_synthetic_utterance_generation_determinism(mock_audio: MockAudioAdapter):
     """Verify synthetic speech generation is deterministic for identical seeds and phrases."""
-    u1 = mock_audio.generate_synthetic_utterance(speaker_seed=1, phrase="TEST PASS", noise_level=0.0)
-    u2 = mock_audio.generate_synthetic_utterance(speaker_seed=1, phrase="TEST PASS", noise_level=0.0)
+    u1 = mock_audio.generate_synthetic_utterance(speaker_seed=1, noise_level=0.0)
+    u2 = mock_audio.generate_synthetic_utterance(speaker_seed=1, noise_level=0.0)
     assert np.array_equal(u1, u2)
 
     # Different seeds produce different waveforms
-    u3 = mock_audio.generate_synthetic_utterance(speaker_seed=2, phrase="TEST PASS", noise_level=0.0)
+    u3 = mock_audio.generate_synthetic_utterance(speaker_seed=2, noise_level=0.0)
     assert not np.array_equal(u1, u3)
 
 
@@ -216,26 +216,25 @@ async def test_full_5_stage_e2e_authentication_to_unlocked(
 
     # Stage 1: RFID
     assert await engine.submit_rfid("E2806894") is True
-    assert engine.state == VaultState.AWAITING_FINGERPRINT
+    assert engine.state == VaultState.AWAITING_FACE
 
     # Stage 2: Fingerprint
-    assert await engine.submit_fingerprint(1, matched=True, confidence=0.98) is True
     assert engine.state == VaultState.AWAITING_FACE
 
     # Stage 3: Face Frame
     live_face = cam.generate_synthetic_face_frame(subject_seed=777, noise_level=0.02)
     assert await engine.submit_face_frame(live_face) is True
-    assert engine.state == VaultState.AWAITING_PASSWORD
+    assert engine.state == VaultState.AWAITING_KEYPAD_PIN
 
     # Stage 4: Password
-    assert await engine.submit_password("VaultMasterKey#2026!") is True
+    assert await engine.submit_keypad_pin("VaultMasterKey#2026!") is True
     assert engine.state == VaultState.AWAITING_VOICE
 
     # Stage 5: Voice Audio Utterance
     live_voice = mock_audio.generate_synthetic_utterance(
-        speaker_seed=1, phrase="OPEN SESAME OVERENGINEERED", noise_level=0.02
+        speaker_seed=1, noise_level=0.02
     )
-    unlocked = await engine.submit_voice_audio(live_voice, spoken_phrase="OPEN SESAME OVERENGINEERED")
+    unlocked = await engine.submit_voice_audio(audio_data=live_voice)
 
     assert unlocked is True
     assert engine.state == VaultState.UNLOCKED
@@ -269,26 +268,25 @@ async def test_engine_voice_mismatch_triggers_lockout(
     await engine.initialize()
     await engine.start_authentication()
     await engine.submit_rfid("E2806894")
-    await engine.submit_fingerprint(1)
     await engine.submit_face("SUBJECT_001_OPERATOR")
-    await engine.submit_password("VaultMasterKey#2026!")
+    await engine.submit_keypad_pin("VaultMasterKey#2026!")
     assert engine.state == VaultState.AWAITING_VOICE
 
     # Intruder voice (Speaker 2)
     intruder_voice = mock_audio.generate_synthetic_utterance(speaker_seed=2)
 
     # 1st Failure
-    assert await engine.submit_voice_audio(intruder_voice) is False
+    assert await engine.submit_voice_audio(audio_data=intruder_voice) is False
     assert engine.failed_attempts == 1
     assert engine.state == VaultState.AWAITING_VOICE
 
     # 2nd Failure
-    assert await engine.submit_voice_audio(intruder_voice) is False
+    assert await engine.submit_voice_audio(audio_data=intruder_voice) is False
     assert engine.failed_attempts == 2
     assert engine.state == VaultState.AWAITING_VOICE
 
     # 3rd Failure -> Triggers LOCKOUT
-    assert await engine.submit_voice_audio(intruder_voice) is False
+    assert await engine.submit_voice_audio(audio_data=intruder_voice) is False
     assert engine.state == VaultState.LOCKOUT
     assert mock_hardware.is_locked is True
     assert mock_hardware.is_alarm_active is True

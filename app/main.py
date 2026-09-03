@@ -103,7 +103,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             await repository.create_user(
                 username="OPERATOR_001",
                 rfid_uid="E2806894",
-                fingerprint_id=1,
                 password_hash=pwd_hash,
                 face_embedding=enrolled_face,
                 voice_print=enrolled_voice,

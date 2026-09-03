@@ -219,6 +219,12 @@ class MockHardwareAdapter(HardwareInterface):
 
             return True
 
+    async def enable_keypad(self, expected_pin_hash: str) -> bool:
+        return True
+
+    async def disable_keypad(self) -> bool:
+        return True
+
     async def trigger_alarm(self, duration_ms: int) -> None:
         """Trigger the virtual audible alarm and strobe alert. Passing duration_ms <= 0 silences the alarm.
 
@@ -284,76 +290,14 @@ class MockHardwareAdapter(HardwareInterface):
         await self._dispatch_event(event)
         return event
 
-    async def simulate_fingerprint_scan(
-        self,
-        finger_id: int,
-        matched: bool = True,
-        confidence: float = 0.95,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> HardwareEvent:
-        """Simulate an optical capacitive fingerprint scan on the sensor.
-
-        Args:
-            finger_id: Enrolled fingerprint template ID (e.g., 1, 2, 3).
-            matched: True if template matched successfully, False if match failed.
-            confidence: Matching confidence score (0.0 to 1.0).
-            metadata: Optional additional sensor telemetry.
-
-        Returns:
-            HardwareEvent: The dispatched event.
-        """
-        payload: Dict[str, Any] = {
-            "finger_id": finger_id,
-            "matched": matched,
-            "confidence": confidence,
-        }
-        if metadata:
-            payload.update(metadata)
-
-        event_type = (
-            HardwareEventType.FINGERPRINT_MATCHED
-            if matched
-            else HardwareEventType.FINGERPRINT_FAILED
-        )
+    async def simulate_keypad_pin_result(self, result_str: str) -> HardwareEvent:
         event = HardwareEvent(
-            event_type=event_type,
-            payload=payload,
-            source_id="MOCK_R503_FINGERPRINT",
-        )
-        logger.info(
-            f"[SIMULATED FINGERPRINT] Finger ID: {finger_id} | "
-            f"Matched: {matched} | Confidence: {confidence:.2f}"
+            event_type=HardwareEventType.KEYPAD_PIN_RESULT,
+            payload={"result": result_str},
+            source_id="MOCK_KEYPAD",
         )
         await self._dispatch_event(event)
         return event
-
-    async def simulate_fingerprint_capture(
-        self,
-        raw_score: int = 85,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> HardwareEvent:
-        """Simulate a raw fingerprint placement on the optical glass prism.
-
-        Args:
-            raw_score: Image quality / scan clarity score (0 to 100).
-            metadata: Optional extra capture metadata.
-
-        Returns:
-            HardwareEvent: The dispatched event.
-        """
-        payload: Dict[str, Any] = {"raw_score": raw_score}
-        if metadata:
-            payload.update(metadata)
-
-        event = HardwareEvent(
-            event_type=HardwareEventType.FINGERPRINT_CAPTURED,
-            payload=payload,
-            source_id="MOCK_R503_FINGERPRINT",
-        )
-        logger.info(f"[SIMULATED FINGERPRINT CAPTURE] Quality score: {raw_score}")
-        await self._dispatch_event(event)
-        return event
-
     async def simulate_tamper(
         self,
         sensor: str = "ENCLOSURE_MICROSWITCH",

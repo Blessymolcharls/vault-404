@@ -1,7 +1,7 @@
 """Automated test suite for Step 3 of The Inconvenient Vault.
 
 Validates:
-1. Complete happy-path 5-stage sequential authentication to UNLOCKED.
+1. Complete happy-path 4-stage sequential authentication to UNLOCKED.
 2. Strict sequence enforcement & out-of-order rejection.
 3. Hardware-driven event integration.
 4. Retry failure threshold and automatic LOCKOUT.
@@ -65,33 +65,26 @@ async def test_end_to_end_successful_authentication(
     start_res = await engine.start_authentication()
     assert start_res is True
     assert engine.state == VaultState.AWAITING_RFID
-    assert mock_hardware.current_display.line1 == "[1/5] SCAN RFID"
+    assert mock_hardware.current_display.line1 == "[1/4] SCAN RFID"
 
     # Stage 1: RFID
     rfid_res = await engine.submit_rfid("E2806894")
     assert rfid_res is True
-    assert engine.state == VaultState.AWAITING_FINGERPRINT
-    assert mock_hardware.current_display.line1 == "[2/5] FINGERPRINT"
-
-    # Stage 2: Fingerprint
-    fp_res = await engine.submit_fingerprint(finger_id=1, matched=True, confidence=0.98)
-    assert fp_res is True
     assert engine.state == VaultState.AWAITING_FACE
-    assert mock_hardware.current_display.line1 == "[3/5] FACE SCAN"
-
+    assert mock_hardware.current_display.line1 == "[2/4] FACE SCAN"
     # Stage 3: Face
     face_res = await engine.submit_face(
         face_id="SUBJECT_001_OPERATOR", confidence=0.96, is_live=True
     )
     assert face_res is True
-    assert engine.state == VaultState.AWAITING_PASSWORD
-    assert mock_hardware.current_display.line1 == "[4/5] ENTER PASS"
+    assert engine.state == VaultState.AWAITING_KEYPAD_PIN
+    assert mock_hardware.current_display.line1 == "[3/4] ENTER PIN"
 
     # Stage 4: Password
-    pwd_res = await engine.submit_password("VaultMasterKey#2026!")
+    pwd_res = await engine.submit_keypad_pin("VaultMasterKey#2026!")
     assert pwd_res is True
     assert engine.state == VaultState.AWAITING_VOICE
-    assert mock_hardware.current_display.line1 == "[5/5] VOICE PHRASE"
+    assert mock_hardware.current_display.line1 == "[4/4] VOICE PHRASE"
 
     # Stage 5: Voice
     voice_res = await engine.submit_voice(
@@ -114,9 +107,8 @@ async def test_out_of_order_submissions_rejected(engine: VaultAuthEngine):
 
     # Submitting credentials when IDLE must fail
     assert await engine.submit_rfid("E2806894") is False
-    assert await engine.submit_fingerprint(1) is False
     assert await engine.submit_face("SUBJECT_001_OPERATOR") is False
-    assert await engine.submit_password("VaultMasterKey#2026!") is False
+    assert await engine.submit_keypad_pin("VaultMasterKey#2026!") is False
     assert await engine.submit_voice("OPEN SESAME OVERENGINEERED") is False
     assert engine.state == VaultState.IDLE
 
@@ -126,7 +118,7 @@ async def test_out_of_order_submissions_rejected(engine: VaultAuthEngine):
 
     # Attempting Stage 3 or 4 while in Stage 1 must be rejected
     assert await engine.submit_face("SUBJECT_001_OPERATOR") is False
-    assert await engine.submit_password("VaultMasterKey#2026!") is False
+    assert await engine.submit_keypad_pin("VaultMasterKey#2026!") is False
     assert await engine.submit_voice("OPEN SESAME OVERENGINEERED") is False
     assert engine.state == VaultState.AWAITING_RFID  # State unchanged
 
@@ -140,11 +132,14 @@ async def test_hardware_event_driven_authentication(
 
     # Hardware simulates card scan while in IDLE -> starts auth and validates RFID
     await mock_hardware.simulate_rfid_scan("E2806894")
-    assert engine.state == VaultState.AWAITING_FINGERPRINT
-
-    # Hardware simulates fingerprint scan
-    await mock_hardware.simulate_fingerprint_scan(finger_id=1, matched=True, confidence=0.99)
     assert engine.state == VaultState.AWAITING_FACE
+
+    # Phone biometric and face are not hardware events, so just pass them
+    await engine.submit_face("SUBJECT_001_OPERATOR", confidence=0.96, is_live=True)
+    
+    # Hardware simulates keypad pin result
+    await mock_hardware.simulate_keypad_pin_result("KEYPAD_PIN_VERIFIED")
+    assert engine.state == VaultState.AWAITING_VOICE
 
 
 @pytest.mark.asyncio
@@ -188,7 +183,7 @@ async def test_tamper_event_triggers_immediate_lockout(
     await engine.initialize()
     await engine.start_authentication()
     await engine.submit_rfid("E2806894")
-    assert engine.state == VaultState.AWAITING_FINGERPRINT
+    assert engine.state == VaultState.AWAITING_FACE
 
     # Trigger simulated chassis breach
     await mock_hardware.simulate_tamper(
@@ -256,33 +251,10 @@ async def test_state_change_listener_broadcast(engine: VaultAuthEngine):
     assert len(recorded_transitions) >= 3
     assert recorded_transitions[0].current_state == VaultState.IDLE
     assert recorded_transitions[1].current_state == VaultState.AWAITING_RFID
-    assert recorded_transitions[2].current_state == VaultState.AWAITING_FINGERPRINT
+    assert recorded_transitions[2].current_state == VaultState.AWAITING_FACE
 
 
-@pytest.mark.asyncio
-async def test_custom_validator_hook_injection(
-    engine: VaultAuthEngine, mock_hardware: MockHardwareAdapter
-):
-    """Verify custom asynchronous validator callbacks can override default validation."""
-    await engine.initialize()
-    await engine.start_authentication()
-    await engine.submit_rfid("E2806894")
-    await engine.submit_fingerprint(1)
-    await engine.submit_face("SUBJECT_001_OPERATOR")
-    assert engine.state == VaultState.AWAITING_PASSWORD
 
-    # Register custom password validator requiring special prefix
-    async def custom_pwd_validator(password: str) -> bool:
-        return password.startswith("DYNAMIC_SECRET_")
-
-    engine.set_password_validator(custom_pwd_validator)
-
-    # Standard password now rejected
-    assert await engine.submit_password("VaultMasterKey#2026!") is False
-
-    # Dynamic prefix password accepted
-    assert await engine.submit_password("DYNAMIC_SECRET_987654") is True
-    assert engine.state == VaultState.AWAITING_VOICE
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ Validates:
 2. FaceVerifier feature embedding extraction, L2 normalization, and cosine similarity.
 3. Anti-spoofing / liveness detection and blur sensitivity.
 4. Biometric matching (Subject A vs Subject B distinct templates).
-5. VaultAuthEngine integration: frame ingestion, advancement to AWAITING_PASSWORD,
+5. VaultAuthEngine integration: frame ingestion, advancement to AWAITING_KEYPAD_PIN,
    and retry threshold lockout.
 """
 
@@ -192,10 +192,6 @@ async def test_engine_face_frame_advances_to_password(
 
     # Step 1: RFID
     assert await engine.submit_rfid("E2806894") is True
-    assert engine.state == VaultState.AWAITING_FINGERPRINT
-
-    # Step 2: Fingerprint
-    assert await engine.submit_fingerprint(1, matched=True, confidence=0.98) is True
     assert engine.state == VaultState.AWAITING_FACE
 
     # Step 3: Face Frame (Live capture of Subject A)
@@ -203,8 +199,8 @@ async def test_engine_face_frame_advances_to_password(
     face_ok = await engine.submit_face_frame(live_frame)
 
     assert face_ok is True
-    assert engine.state == VaultState.AWAITING_PASSWORD
-    assert mock_hardware.current_display.line1 == "[4/5] ENTER PASS"
+    assert engine.state == VaultState.AWAITING_KEYPAD_PIN
+    assert mock_hardware.current_display.line1 == "[3/4] ENTER PIN"
 
 
 @pytest.mark.asyncio
@@ -229,7 +225,6 @@ async def test_engine_unrecognized_face_triggers_lockout(
     await engine.initialize()
     await engine.start_authentication()
     await engine.submit_rfid("E2806894")
-    await engine.submit_fingerprint(1)
     assert engine.state == VaultState.AWAITING_FACE
 
     # Intruder face (Seed 200)

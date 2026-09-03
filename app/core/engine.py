@@ -1,7 +1,7 @@
 """Finite State Machine (FSM) Authentication Engine for The Inconvenient Vault.
 
 Enforces strict sequential authentication:
-IDLE -> AWAITING_RFID -> AWAITING_FINGERPRINT -> AWAITING_FACE -> AWAITING_PASSWORD -> AWAITING_VOICE -> UNLOCKED
+IDLE -> AWAITING_RFID -> AWAITING_FACE -> AWAITING_FACE -> AWAITING_KEYPAD_PIN -> AWAITING_VOICE -> UNLOCKED
 """
 
 import asyncio
@@ -60,16 +60,8 @@ class EngineConfig(BaseModel):
         default_factory=lambda: {"E2806894", "A1B2C3D4"},
         description="Authorized RFID tag UIDs",
     )
-    valid_fingerprint_ids: Set[int] = Field(
-        default_factory=lambda: {1, 2},
-        description="Authorized biometric fingerprint template IDs",
-    )
-    min_fingerprint_confidence: float = Field(
-        default=0.85,
-        ge=0.0,
-        le=1.0,
-        description="Minimum biometric matching confidence score",
-    )
+
+
     valid_face_ids: Set[str] = Field(
         default_factory=lambda: {"SUBJECT_001_OPERATOR"},
         description="Authorized biometric facial recognition subject IDs",
@@ -111,7 +103,7 @@ class StateTransitionEvent(BaseModel):
 
 
 class VaultAuthEngine:
-    """Central Finite State Machine (FSM) enforcing 5-stage sequential authentication.
+    """Central Finite State Machine (FSM) enforcing 4-stage sequential authentication.
 
     Coordinates hardware interactions exclusively through the HardwareInterface abstraction
     and records immutable audit trails in the database repository.
@@ -454,7 +446,7 @@ class VaultAuthEngine:
                 logger.info(f"[STAGE 1 PASS] RFID UID '{normalized_uid}' authenticated.")
                 self._failed_attempts = 0
                 await self._transition_to(
-                    VaultState.AWAITING_FINGERPRINT,
+                    VaultState.AWAITING_FACE,
                     reason=f"RFID authenticated ({normalized_uid})",
                 )
                 return True
@@ -465,60 +457,6 @@ class VaultAuthEngine:
                 )
                 return False
 
-    async def submit_fingerprint(
-        self,
-        finger_id: int,
-        matched: bool = True,
-        confidence: float = 0.95,
-    ) -> bool:
-        """Stage 2: Submit fingerprint scan result for verification."""
-        async with self._lock:
-            if self._state != VaultState.AWAITING_FINGERPRINT:
-                logger.warning(
-                    f"[OUT-OF-ORDER] Fingerprint submitted while in state {self._state.value}. Rejected."
-                )
-                return False
-
-            is_valid = False
-
-            # 1. Database User Profile Check
-            if self._active_user is not None:
-                is_valid = (
-                    matched
-                    and finger_id == self._active_user.fingerprint_id
-                    and confidence >= self._config.min_fingerprint_confidence
-                )
-            # 2. Custom Validator Hook
-            elif self._fingerprint_validator:
-                try:
-                    is_valid = await self._fingerprint_validator(finger_id, matched, confidence)
-                except Exception as ex:
-                    logger.error(f"Error in custom fingerprint validator: {ex}")
-                    is_valid = False
-            # 3. Config Default Check
-            else:
-                is_valid = (
-                    matched
-                    and finger_id in self._config.valid_fingerprint_ids
-                    and confidence >= self._config.min_fingerprint_confidence
-                )
-
-            if is_valid:
-                logger.info(
-                    f"[STAGE 2 PASS] Fingerprint ID {finger_id} authenticated (Confidence: {confidence:.2f})."
-                )
-                self._failed_attempts = 0
-                await self._transition_to(
-                    VaultState.AWAITING_FACE,
-                    reason=f"Fingerprint ID {finger_id} authenticated",
-                )
-                return True
-            else:
-                await self._handle_failed_attempt(
-                    stage=VaultState.AWAITING_FINGERPRINT,
-                    detail=f"Fingerprint failed (ID: {finger_id}, Matched: {matched}, Conf: {confidence:.2f})",
-                )
-                return False
 
     async def submit_face(
         self,
@@ -526,7 +464,7 @@ class VaultAuthEngine:
         confidence: float = 0.95,
         is_live: bool = True,
     ) -> bool:
-        """Stage 3: Submit facial recognition detection result by identifier."""
+        """Stage 2: Submit facial recognition detection result by identifier."""
         async with self._lock:
             if self._state != VaultState.AWAITING_FACE:
                 logger.warning(
@@ -550,11 +488,11 @@ class VaultAuthEngine:
 
             if is_valid:
                 logger.info(
-                    f"[STAGE 3 PASS] Face ID '{face_id}' authenticated (Confidence: {confidence:.2f}, Live: {is_live})."
+                    f"[STAGE 2 PASS] Face ID '{face_id}' authenticated (Confidence: {confidence:.2f}, Live: {is_live})."
                 )
                 self._failed_attempts = 0
                 await self._transition_to(
-                    VaultState.AWAITING_PASSWORD,
+                    VaultState.AWAITING_KEYPAD_PIN,
                     reason=f"Face authenticated ({face_id})",
                 )
                 return True
@@ -566,7 +504,7 @@ class VaultAuthEngine:
                 return False
 
     async def submit_face_frame(self, frame: np.ndarray) -> bool:
-        """Stage 3 (Vision Pipeline): Submit a captured image frame for biometric verification.
+        """Stage 2 (Vision Pipeline): Submit a captured image frame for biometric verification.
 
         Args:
             frame: Image array of shape (H, W, 3).
@@ -595,10 +533,10 @@ class VaultAuthEngine:
             )
 
             if matched:
-                logger.info("[STAGE 3 PASS] Live facial frame authenticated successfully.")
+                logger.info("[STAGE 2 PASS] Live facial frame authenticated successfully.")
                 self._failed_attempts = 0
                 await self._transition_to(
-                    VaultState.AWAITING_PASSWORD,
+                    VaultState.AWAITING_KEYPAD_PIN,
                     reason="Live facial frame authenticated",
                 )
                 return True
@@ -609,51 +547,50 @@ class VaultAuthEngine:
                 )
                 return False
 
-    async def submit_password(self, password: str) -> bool:
-        """Stage 4: Submit alphanumeric passphrase for verification."""
+    async def submit_keypad_pin(self, pin: str = "", hardware_verified: bool = False) -> bool:
+        """Stage 3: Submit keypad PIN for verification."""
         async with self._lock:
-            if self._state != VaultState.AWAITING_PASSWORD:
+            if self._state != VaultState.AWAITING_KEYPAD_PIN:
                 logger.warning(
-                    f"[OUT-OF-ORDER] Password submitted while in state {self._state.value}. Rejected."
+                    f"[OUT-OF-ORDER] Keypad PIN submitted while in state {self._state.value}. Rejected."
                 )
                 return False
 
             is_valid = False
 
-            # 1. Database Argon2id Hash Verification
-            if self._active_user is not None:
+            if hardware_verified:
+                is_valid = True
+            elif self._active_user is not None:
                 try:
                     is_valid = self._password_hasher.verify(
-                        self._active_user.password_hash, password
+                        self._active_user.password_hash, pin
                     )
                 except VerifyMismatchError:
                     is_valid = False
                 except Exception as ex:
-                    logger.error(f"Error during Argon2 password verification: {ex}")
+                    logger.error(f"Error during Argon2 PIN verification: {ex}")
                     is_valid = False
-            # 2. Custom Validator Hook
             elif self._password_validator:
                 try:
-                    is_valid = await self._password_validator(password)
+                    is_valid = await self._password_validator(pin)
                 except Exception as ex:
                     logger.error(f"Error in custom password validator: {ex}")
                     is_valid = False
-            # 3. Default Config Passwords
             else:
-                is_valid = password in self._config.valid_passwords
+                is_valid = pin in self._config.valid_passwords
 
             if is_valid:
-                logger.info("[STAGE 4 PASS] Password authenticated successfully.")
+                logger.info("[STAGE 3 PASS] Keypad PIN authenticated successfully.")
                 self._failed_attempts = 0
                 await self._transition_to(
                     VaultState.AWAITING_VOICE,
-                    reason="Password authenticated",
+                    reason="Keypad PIN authenticated",
                 )
                 return True
             else:
                 await self._handle_failed_attempt(
-                    stage=VaultState.AWAITING_PASSWORD,
-                    detail="Incorrect password entered",
+                    stage=VaultState.AWAITING_KEYPAD_PIN,
+                    detail="Incorrect PIN entered",
                 )
                 return False
 
@@ -663,7 +600,7 @@ class VaultAuthEngine:
         confidence: float = 0.95,
         voice_matched: bool = True,
     ) -> bool:
-        """Stage 5: Submit voice recognition challenge by phrase for final unlock verification."""
+        """Stage 4: Submit voice recognition challenge by phrase for final unlock verification."""
         async with self._lock:
             if self._state != VaultState.AWAITING_VOICE:
                 logger.warning(
@@ -697,7 +634,7 @@ class VaultAuthEngine:
 
             if is_valid:
                 logger.info(
-                    f"[STAGE 5 PASS] Voice passphrase '{normalized_phrase}' authenticated."
+                    f"[STAGE 4 PASS] Voice passphrase '{normalized_phrase}' authenticated."
                 )
                 self._failed_attempts = 0
                 await self._transition_to(
@@ -718,16 +655,7 @@ class VaultAuthEngine:
         spoken_phrase: Optional[str] = None,
         sample_rate: int = 16000,
     ) -> bool:
-        """Stage 5 (Voice Biometrics): Submit a recorded audio waveform for 2-factor voice authentication.
-
-        Args:
-            audio_data: 1D audio waveform array.
-            spoken_phrase: Spoken challenge phrase to check against expected passphrase.
-            sample_rate: Audio sampling frequency in Hz.
-
-        Returns:
-            bool: True if speaker voiceprint and passphrase matched -> advances to UNLOCKED.
-        """
+        """Stage 4 (Voice Biometrics): Submit a recorded audio waveform for 2-factor voice authentication."""
         async with self._lock:
             if self._state != VaultState.AWAITING_VOICE:
                 logger.warning(
@@ -754,7 +682,7 @@ class VaultAuthEngine:
             )
 
             if matched:
-                logger.info("🎉 [STAGE 5 PASS] Live voice biometric and passphrase authenticated!")
+                logger.info("🎉 [STAGE 4 PASS] Live voice biometric and passphrase authenticated!")
                 self._failed_attempts = 0
                 await self._transition_to(
                     VaultState.UNLOCKED,
@@ -790,15 +718,13 @@ class VaultAuthEngine:
                 if self._state == VaultState.AWAITING_RFID:
                     await self.submit_rfid(str(card_uid))
 
-        elif event.event_type in (
-            HardwareEventType.FINGERPRINT_MATCHED,
-            HardwareEventType.FINGERPRINT_FAILED,
-        ):
-            if self._state == VaultState.AWAITING_FINGERPRINT:
-                finger_id = int(event.payload.get("finger_id", 0))
-                matched = bool(event.payload.get("matched", False))
-                confidence = float(event.payload.get("confidence", 0.0))
-                await self.submit_fingerprint(finger_id, matched, confidence)
+        elif event.event_type == HardwareEventType.KEYPAD_PIN_RESULT:
+            if self._state == VaultState.AWAITING_KEYPAD_PIN:
+                result = event.payload.get("result", "")
+                if result == "KEYPAD_PIN_VERIFIED":
+                    await self.submit_keypad_pin(hardware_verified=True)
+                else:
+                    await self.submit_keypad_pin(pin=result)
 
         elif event.event_type == HardwareEventType.HARDWARE_ERROR:
             logger.error(f"Hardware error reported: {event.payload}")
@@ -843,6 +769,7 @@ class VaultAuthEngine:
                 reason=f"Exceeded max failed attempts in {stage.value} ({detail})",
             )
         else:
+            await self._hardware.trigger_alarm(2000)
             # Update display with warning buzzer and remaining attempts
             await self._hardware.set_display(
                 DisplayStatus(
@@ -908,20 +835,8 @@ class VaultAuthEngine:
             await self._hardware.set_lock(True)
             await self._hardware.set_display(
                 DisplayStatus(
-                    line1="[1/5] SCAN RFID",
+                    line1="[1/4] SCAN RFID",
                     line2="HOLD CARD NEAR",
-                    led_color=LedColor.CYAN,
-                    buzzer=True,
-                    duration_ms=500,
-                )
-            )
-            self._schedule_stage_timeout(self._config.stage_timeout_seconds)
-
-        elif new_state == VaultState.AWAITING_FINGERPRINT:
-            await self._hardware.set_display(
-                DisplayStatus(
-                    line1="[2/5] FINGERPRINT",
-                    line2="PLACE ON SCANNER",
                     led_color=LedColor.CYAN,
                     buzzer=True,
                     duration_ms=500,
@@ -932,7 +847,7 @@ class VaultAuthEngine:
         elif new_state == VaultState.AWAITING_FACE:
             await self._hardware.set_display(
                 DisplayStatus(
-                    line1="[3/5] FACE SCAN",
+                    line1="[2/4] FACE SCAN",
                     line2="LOOK AT CAMERA",
                     led_color=LedColor.CYAN,
                     buzzer=True,
@@ -941,11 +856,15 @@ class VaultAuthEngine:
             )
             self._schedule_stage_timeout(self._config.stage_timeout_seconds)
 
-        elif new_state == VaultState.AWAITING_PASSWORD:
+        elif new_state == VaultState.AWAITING_KEYPAD_PIN:
+            hash_str = "TODO_GET_HASH"
+            if self._active_user:
+                hash_str = self._active_user.password_hash
+            await self._hardware.enable_keypad(hash_str)
             await self._hardware.set_display(
                 DisplayStatus(
-                    line1="[4/5] ENTER PASS",
-                    line2="ENTER SECRET KEY",
+                    line1="[3/4] ENTER PIN",
+                    line2="KEYPAD INPUT",
                     led_color=LedColor.CYAN,
                     buzzer=True,
                     duration_ms=500,
@@ -954,9 +873,10 @@ class VaultAuthEngine:
             self._schedule_stage_timeout(self._config.stage_timeout_seconds)
 
         elif new_state == VaultState.AWAITING_VOICE:
+            await self._hardware.disable_keypad()
             await self._hardware.set_display(
                 DisplayStatus(
-                    line1="[5/5] VOICE PHRASE",
+                    line1="[4/4] VOICE PHRASE",
                     line2="SPEAK PASSPHRASE",
                     led_color=LedColor.CYAN,
                     buzzer=True,
@@ -966,7 +886,7 @@ class VaultAuthEngine:
             self._schedule_stage_timeout(self._config.stage_timeout_seconds)
 
         elif new_state == VaultState.UNLOCKED:
-            logger.info("🎉 All 5 stages passed! Actuating solenoid to UNLOCKED state.")
+            logger.info("🎉 All 4 stages passed! Actuating solenoid to UNLOCKED state.")
             await self._hardware.set_lock(False)
             await self._hardware.set_display(
                 DisplayStatus(

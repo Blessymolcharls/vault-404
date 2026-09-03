@@ -31,9 +31,9 @@ def test_vault_state_enum_members():
     expected_states = {
         "IDLE",
         "AWAITING_RFID",
-        "AWAITING_FINGERPRINT",
+        
         "AWAITING_FACE",
-        "AWAITING_PASSWORD",
+        "AWAITING_KEYPAD_PIN",
         "AWAITING_VOICE",
         "UNLOCKED",
         "LOCKOUT",
@@ -52,9 +52,8 @@ def test_hardware_event_type_enum_members():
     """Verify essential hardware event types exist for RFID, fingerprint, locks, and alarms."""
     required_events = {
         "RFID_SCANNED",
-        "FINGERPRINT_CAPTURED",
-        "FINGERPRINT_MATCHED",
-        "FINGERPRINT_FAILED",
+        "KEYPAD_STATUS",
+        "KEYPAD_PIN_RESULT",
         "LOCK_STATUS_CHANGED",
         "TAMPER_TRIGGERED",
         "ALARM_TRIGGERED",

@@ -192,6 +192,14 @@ class ESP32SerialAdapter(HardwareInterface):
         }
         return await self._send_command(cmd)
 
+    async def enable_keypad(self, expected_pin_hash: str) -> bool:
+        cmd = {"cmd": "ENABLE_KEYPAD", "expected_pin_hash": expected_pin_hash}
+        return await self._send_command(cmd)
+
+    async def disable_keypad(self) -> bool:
+        cmd = {"cmd": "DISABLE_KEYPAD"}
+        return await self._send_command(cmd)
+
     async def trigger_alarm(self, duration_ms: int) -> None:
         """Send TRIGGER_ALARM command to activate or silence the siren."""
         self._is_alarm_active = duration_ms > 0
@@ -275,8 +283,8 @@ class ESP32SerialAdapter(HardwareInterface):
         # Map ESP32 wire event name to HardwareEventType enum
         event_type_map = {
             "RFID_SCANNED": HardwareEventType.RFID_SCANNED,
-            "FINGERPRINT_MATCHED": HardwareEventType.FINGERPRINT_MATCHED,
-            "FINGERPRINT_FAILED": HardwareEventType.FINGERPRINT_FAILED,
+            "KEYPAD_STATUS": HardwareEventType.KEYPAD_STATUS,
+            "KEYPAD_PIN_RESULT": HardwareEventType.KEYPAD_PIN_RESULT,
             "TAMPER_TRIGGERED": HardwareEventType.TAMPER_TRIGGERED,
             "LOCK_CONFIRMED": HardwareEventType.LOCK_STATUS_CHANGED,
             "HARDWARE_ERROR": HardwareEventType.HARDWARE_ERROR,

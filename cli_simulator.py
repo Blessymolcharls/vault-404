@@ -145,8 +145,8 @@ class TerminalSimulatorHarness:
         assert rfid_event.payload["card_uid"] == "E2806894"
 
         # 3. Simulate Fingerprint
-        fp_event = await self.adapter.simulate_fingerprint_scan(finger_id=1, matched=True, confidence=0.98)
-        assert fp_event.event_type == HardwareEventType.FINGERPRINT_MATCHED
+        fp_event = await self.adapter.simulate_keypad_pin_result(finger_id=1, matched=True, confidence=0.98)
+        assert fp_event.event_type == HardwareEventType.KEYPAD_PIN_RESULT
 
         # 4. Simulate Tamper
         tamper_event = await self.adapter.simulate_tamper()
@@ -225,13 +225,13 @@ class TerminalSimulatorHarness:
                 await self.adapter.simulate_rfid_scan(custom_uid)
 
             elif choice == "4":
-                await self.adapter.simulate_fingerprint_scan(finger_id=1, matched=True, confidence=0.97)
+                await self.adapter.simulate_keypad_pin_result(finger_id=1, matched=True, confidence=0.97)
                 await self.adapter.set_display(
                     DisplayStatus(line1="FINGERPRINT OK", line2="MATCH 97%", led_color=LedColor.GREEN, buzzer=True)
                 )
 
             elif choice == "5":
-                await self.adapter.simulate_fingerprint_scan(finger_id=99, matched=False, confidence=0.21)
+                await self.adapter.simulate_keypad_pin_result(finger_id=99, matched=False, confidence=0.21)
                 await self.adapter.set_display(
                     DisplayStatus(line1="FP REJECTED", line2="NO MATCH", led_color=LedColor.RED, buzzer=True)
                 )

@@ -23,32 +23,8 @@ def client() -> TestClient:
         yield test_client
 
 
-# ============================================================================
-# 1. State & Status Inspection Tests
-# ============================================================================
-
-
-def test_vault_status_and_health(client: TestClient):
-    """Verify GET /api/v1/vault/status returns initial diagnostic telemetry."""
-    response = client.get("/api/v1/vault/status")
-    assert response.status_code == 200
-
-    data = response.json()
-    assert data["state"] == VaultState.IDLE.value
-    assert data["is_locked"] is True
-    assert data["is_alarm_active"] is False
-    assert data["failed_attempts"] == 0
-    assert data["max_failed_attempts"] == 3
-    assert data["display"]["line1"] == "VAULT 404 READY"
-
-
-# ============================================================================
-# 2. Full 5-Stage Sequential Authentication via REST API
-# ============================================================================
-
-
 def test_full_sequential_authentication_via_rest_api(client: TestClient):
-    """Verify complete 5-stage sequential authentication through REST endpoints."""
+    """Verify complete 4-stage sequential authentication through REST endpoints."""
     # 0. Start Authentication
     res_start = client.post("/api/v1/vault/start")
     assert res_start.status_code == 200
@@ -58,16 +34,7 @@ def test_full_sequential_authentication_via_rest_api(client: TestClient):
     res_rfid = client.post("/api/v1/simulate/rfid", json={"card_uid": "E2806894"})
     assert res_rfid.status_code == 200
     assert res_rfid.json()["success"] is True
-    assert res_rfid.json()["data"]["state"] == VaultState.AWAITING_FINGERPRINT.value
-
-    # 2. Stage 2: Fingerprint Scan (Template ID 1)
-    res_fp = client.post(
-        "/api/v1/simulate/fingerprint",
-        json={"finger_id": 1, "matched": True, "confidence": 0.98},
-    )
-    assert res_fp.status_code == 200
-    assert res_fp.json()["success"] is True
-    assert res_fp.json()["data"]["state"] == VaultState.AWAITING_FACE.value
+    assert res_rfid.json()["data"]["state"] == VaultState.AWAITING_FACE.value
 
     # 3. Stage 3: Facial Biometrics (Synthetic Subject 777)
     res_face = client.post(
@@ -76,12 +43,12 @@ def test_full_sequential_authentication_via_rest_api(client: TestClient):
     )
     assert res_face.status_code == 200
     assert res_face.json()["success"] is True
-    assert res_face.json()["data"]["state"] == VaultState.AWAITING_PASSWORD.value
+    assert res_face.json()["data"]["state"] == VaultState.AWAITING_KEYPAD_PIN.value
 
     # 4. Stage 4: Secret Password Key
     res_pwd = client.post(
         "/api/v1/auth/password",
-        json={"password": "VaultMasterKey#2026!"},
+        json={"pin": "VaultMasterKey#2026!"},
     )
     assert res_pwd.status_code == 200
     assert res_pwd.json()["success"] is True

@@ -26,8 +26,8 @@ class User(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     username: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
     rfid_uid: Mapped[str] = mapped_column(String(32), unique=True, index=True, nullable=False)
-    fingerprint_id: Mapped[int] = mapped_column(Integer, unique=True, index=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    phone_public_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     face_embedding_json: Mapped[str] = mapped_column(Text, nullable=False)
     voice_print_json: Mapped[str] = mapped_column(Text, nullable=False)
     voice_passphrase: Mapped[str] = mapped_column(
@@ -57,7 +57,7 @@ class User(Base):
             "id": self.id,
             "username": self.username,
             "rfid_uid": self.rfid_uid,
-            "fingerprint_id": self.fingerprint_id,
+            "phone_public_key": self.phone_public_key,
             "voice_passphrase": self.voice_passphrase,
             "is_active": self.is_active,
             "created_at": self.created_at.isoformat() if self.created_at else None,

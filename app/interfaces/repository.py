@@ -17,10 +17,10 @@ class VaultRepositoryInterface(ABC):
         self,
         username: str,
         rfid_uid: str,
-        fingerprint_id: int,
         password_hash: str,
         face_embedding: Union[List[float], np.ndarray],
         voice_print: Union[List[float], np.ndarray],
+        phone_public_key: Optional[str] = None,
         voice_passphrase: str = "OPEN SESAME OVERENGINEERED",
     ) -> Any:
         """Enroll and persist a new user with full multi-modal credential profiles.
@@ -28,7 +28,6 @@ class VaultRepositoryInterface(ABC):
         Args:
             username: Unique username.
             rfid_uid: Unique RFID/NFC tag UID string.
-            fingerprint_id: Biometric fingerprint template ID (1..127).
             password_hash: Argon2id password hash string.
             face_embedding: 256D normalized facial feature embedding vector.
             voice_print: 256D normalized acoustic voiceprint vector.

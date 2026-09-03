@@ -125,26 +125,13 @@ async def test_simulate_rfid_scan():
 
 
 @pytest.mark.asyncio
-async def test_simulate_fingerprint_scan_and_capture():
-    """Verify fingerprint match, fail, and raw capture events."""
+async def test_simulate_keypad_pin_result():
+    """Verify keypad pin result events."""
     adapter = MockHardwareAdapter(auto_initialize=True)
 
-    # Match test
-    match_ev = await adapter.simulate_fingerprint_scan(finger_id=2, matched=True, confidence=0.99)
-    assert match_ev.event_type == HardwareEventType.FINGERPRINT_MATCHED
-    assert match_ev.payload["finger_id"] == 2
-    assert match_ev.payload["matched"] is True
-    assert match_ev.payload["confidence"] == 0.99
-
-    # Rejection test
-    fail_ev = await adapter.simulate_fingerprint_scan(finger_id=7, matched=False, confidence=0.15)
-    assert fail_ev.event_type == HardwareEventType.FINGERPRINT_FAILED
-    assert fail_ev.payload["matched"] is False
-
-    # Capture test
-    cap_ev = await adapter.simulate_fingerprint_capture(raw_score=92)
-    assert cap_ev.event_type == HardwareEventType.FINGERPRINT_CAPTURED
-    assert cap_ev.payload["raw_score"] == 92
+    ev = await adapter.simulate_keypad_pin_result("123456")
+    assert ev.event_type == HardwareEventType.KEYPAD_PIN_RESULT
+    assert ev.payload["result"] == "123456"
 
 
 @pytest.mark.asyncio

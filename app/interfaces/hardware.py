@@ -67,6 +67,13 @@ class HardwareInterface(ABC):
 
     @abstractmethod
     async def trigger_alarm(self, duration_ms: int) -> None:
+        ...
+
+    async def enable_keypad(self, expected_pin_hash: str) -> bool:
+        ...
+
+    async def disable_keypad(self) -> bool:
+
         """Activate the physical tamper alarm / siren / strobe sequence.
 
         Args:

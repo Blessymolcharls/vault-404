@@ -5,6 +5,7 @@ and anti-spoofing / liveness validation.
 """
 
 import logging
+import os
 from typing import Optional
 import cv2
 import numpy as np
@@ -46,6 +47,8 @@ class FaceVerifier(FaceRecognizerInterface):
         self.default_threshold: float = default_threshold
         self.min_liveness_threshold: float = min_liveness_threshold
         self.target_size: tuple[int, int] = target_size
+        model_path = os.path.join(os.path.dirname(__file__), "face_detection_yunet_2023mar.onnx")
+        self.face_detector = cv2.FaceDetectorYN_create(model_path, "", (320, 320))
 
     def extract_embeddings(self, frame: np.ndarray) -> Optional[np.ndarray]:
         """Extract an L2-normalized 256-dimensional spatial and gradient feature embedding.
@@ -61,21 +64,39 @@ class FaceVerifier(FaceRecognizerInterface):
             logger.warning("extract_embeddings received empty or None frame.")
             return None
 
-        # Determine frame dimensions & central facial ROI crop
+        # Detect face using YuNet
         if len(frame.shape) == 3 and frame.shape[2] == 3:
-            h, w, _ = frame.shape
-            crop = frame[int(0.15 * h) : int(0.85 * h), int(0.20 * w) : int(0.80 * w)]
-            resized = cv2.resize(crop, self.target_size, interpolation=cv2.INTER_AREA)
-            gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+            bgr_frame = frame
         elif len(frame.shape) == 2:
-            h, w = frame.shape
-            crop = frame[int(0.15 * h) : int(0.85 * h), int(0.20 * w) : int(0.80 * w)]
-            resized_gray = cv2.resize(crop, self.target_size, interpolation=cv2.INTER_AREA)
-            resized = cv2.merge([resized_gray, resized_gray, resized_gray])
-            gray = resized_gray
+            bgr_frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
         else:
             logger.warning(f"Unexpected frame shape: {frame.shape}")
             return None
+        
+        h, w = bgr_frame.shape[:2]
+        self.face_detector.setInputSize((w, h))
+        
+        ret, faces = self.face_detector.detect(bgr_frame)
+
+        if faces is None or len(faces) == 0:
+            logger.warning("No face detected in frame via YuNet.")
+            return None
+        
+        # Take the largest bounding box
+        largest_face = max(faces, key=lambda f: f[2] * f[3])
+        x, y, w_face, h_face = map(int, largest_face[:4])
+        
+        x = max(0, x)
+        y = max(0, y)
+        w_face = min(w - x, w_face)
+        h_face = min(h - y, h_face)
+        
+        if w_face <= 0 or h_face <= 0:
+            return None
+
+        crop = bgr_frame[y : y + h_face, x : x + w_face]
+        resized = cv2.resize(crop, self.target_size, interpolation=cv2.INTER_AREA)
+        gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
 
         # 1. Multi-channel sub-block color stats (8x8 grid for B, G, R = 192 features)
         gh, gw = self.target_size[0] // 8, self.target_size[1] // 8

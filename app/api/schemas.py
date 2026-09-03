@@ -47,14 +47,6 @@ class RfidInputRequest(BaseModel):
     card_uid: str = Field(..., description="Hexadecimal RFID tag UID (e.g., 'E2806894')")
 
 
-class FingerprintInputRequest(BaseModel):
-    """Payload for Stage 2 biometric fingerprint scan."""
-
-    finger_id: int = Field(default=1, ge=1, le=127, description="Enrolled fingerprint template slot ID")
-    matched: bool = Field(default=True, description="Biometric optical sensor hardware match flag")
-    confidence: float = Field(default=0.95, ge=0.0, le=1.0, description="Biometric feature matching confidence score")
-
-
 class FaceInputRequest(BaseModel):
     """Payload for Stage 3 facial biometric submission."""
 
@@ -73,10 +65,10 @@ class FaceInputRequest(BaseModel):
     noise_level: float = Field(default=0.01, ge=0.0, description="Simulated sensor noise variance")
 
 
-class PasswordInputRequest(BaseModel):
-    """Payload for Stage 4 alphanumeric secret key submission."""
+class KeypadPinInputRequest(BaseModel):
+    """Payload for Stage 4 keypad PIN submission."""
 
-    password: str = Field(..., min_length=1, description="Plaintext secret password")
+    pin: str = Field(..., min_length=1, description="Plaintext keypad PIN")
 
 
 class VoiceInputRequest(BaseModel):
@@ -91,7 +83,10 @@ class VoiceInputRequest(BaseModel):
         description="Spoken vocal challenge passphrase string",
     )
     noise_level: float = Field(default=0.01, ge=0.0, description="Simulated acoustic background noise variance")
-
+    audio_base64: Optional[str] = Field(
+        default=None,
+        description="Optional Base64-encoded audio recording",
+    )
 
 class TamperRequest(BaseModel):
     """Payload to simulate physical tamper sensor breach."""
@@ -104,8 +99,8 @@ class UserEnrollRequest(BaseModel):
 
     username: str = Field(..., min_length=2, max_length=64)
     rfid_uid: str = Field(..., min_length=4, max_length=32)
-    fingerprint_id: int = Field(default=1, ge=1, le=127)
     password: str = Field(..., min_length=6)
+    phone_public_key: Optional[str] = Field(default=None, description="Optional Base64 encoded ECDSA public key from phone")
     face_subject_seed: int = Field(default=777, description="Subject seed used to generate face profile")
     voice_speaker_seed: int = Field(default=1, description="Speaker seed used to generate voiceprint")
     voice_passphrase: str = Field(default="OPEN SESAME OVERENGINEERED")
@@ -117,7 +112,7 @@ class UserResponseSchema(BaseModel):
     id: int
     username: str
     rfid_uid: str
-    fingerprint_id: int
+    phone_public_key: Optional[str] = None
     voice_passphrase: str
     is_active: bool
     created_at: Optional[datetime] = None
