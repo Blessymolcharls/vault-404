@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The Inconvenient Vault — Operator Security Console</title>
+  <meta name="description" content="Cyberpunk Telemetry Console for The Inconvenient Vault Sequential Authentication System.">
+  <link rel="stylesheet" href="/static/css/dashboard.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2300f0ff' stroke-width='2'><rect x='3' y='11' width='18' height='11' rx='2' ry='2'/><path d='M7 11V7a5 5 0 0 1 10 0v4'/></svg>">
+</head>
+<body>
+
+  <!-- ========================================================================
+       Top Navigation Header
+       ======================================================================== -->
+  <header class="vault-header">
+    <div class="brand-wrapper">
+      <div class="brand-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+        </svg>
+      </div>
+      <div class="brand-text">
+        <h1>The Inconvenient Vault</h1>
+        <p>OVER-ENGINEERED 5-STAGE MULTI-MODAL AUTHENTICATION</p>
+      </div>
+    </div>
+
+    <div class="header-status-badge">
+      <div id="wsStatusIndicator" class="ws-status-indicator ws-disconnected">
+        <span class="status-dot"></span>
+        <span class="status-text">CONNECTING...</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ========================================================================
+       Main Content Container
+       ======================================================================== -->
+  <main class="vault-container">
+
+    <!-- 5-Stage Authentication Pipeline Stepper -->
+    <section class="stepper-panel">
+      <div class="stepper-title">Sequential Security Pipeline Status</div>
+      <div class="stepper-pipeline">
+        <div id="stepNodeIdle" class="step-node active">
+          <div class="step-circle">0</div>
+          <div class="step-label">IDLE</div>
+        </div>
+        <div id="stepNodeRfid" class="step-node">
+          <div class="step-circle">1</div>
+          <div class="step-label">RFID SCAN</div>
+        </div>
+        <div id="stepNodeFp" class="step-node">
+          <div class="step-circle">2</div>
+          <div class="step-label">FINGERPRINT</div>
+        </div>
+        <div id="stepNodeFace" class="step-node">
+          <div class="step-circle">3</div>
+          <div class="step-label">FACE BIOMETRICS</div>
+        </div>
+        <div id="stepNodePwd" class="step-node">
+          <div class="step-circle">4</div>
+          <div class="step-label">SECRET KEY</div>
+        </div>
+        <div id="stepNodeVoice" class="step-node">
+          <div class="step-circle">5</div>
+          <div class="step-label">VOICE PHRASE</div>
+        </div>
+        <div id="stepNodeUnlocked" class="step-node">
+          <div class="step-circle">✓</div>
+          <div class="step-label">UNLOCKED</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Two-Column Primary HUD Grid -->
+    <div class="dashboard-grid">
+
+      <!-- Left Column: Physical Vault Telemetry HUD -->
+      <section class="hud-panel">
+        <div class="panel-header">
+          <h2>Vault Peripheral Diagnostics</h2>
+        </div>
+
+        <!-- Simulated OLED Phosphor Display -->
+        <div class="oled-container">
+          <div class="oled-scanlines"></div>
+          <div class="oled-screen">
+            <div id="oledLine1">VAULT 404 READY</div>
+            <div id="oledLine2">START AUTHENTICATION</div>
+          </div>
+        </div>
+
+        <!-- Physical Status Indicators & Meters -->
+        <div class="status-indicators-grid">
+          <div class="indicator-card">
+            <div id="ledLamp" class="indicator-lamp lamp-blue"></div>
+            <div class="indicator-meta">
+              <h4>RGB BEACON</h4>
+              <span id="ledColorLabel">BLUE</span>
+            </div>
+          </div>
+
+          <div class="indicator-card">
+            <div class="indicator-meta">
+              <h4>FSM STATE</h4>
+              <span id="stateLabel">IDLE</span>
+            </div>
+          </div>
+
+          <div class="indicator-card">
+            <div class="indicator-meta">
+              <h4>OPERATOR</h4>
+              <span id="operatorLabel">UNIDENTIFIED</span>
+            </div>
+          </div>
+
+          <div class="indicator-card">
+            <div class="indicator-meta">
+              <h4>STAGE RETRIES</h4>
+              <span id="attemptsLabel">0 / 3</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Solenoid Lock Gauge Visualizer -->
+        <div class="lock-gauge-box">
+          <div id="lockGraphic" class="lock-solenoid-graphic">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+          </div>
+          <div id="lockStatusLabel" class="lock-status-label">LOCKED</div>
+        </div>
+
+        <!-- Master Control Action Bar -->
+        <div class="control-action-bar">
+          <button id="btnStartAuth" class="btn btn-primary">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+            Start Chain
+          </button>
+          <button id="btnResetVault" class="btn btn-outline">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"></path><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+            Reset to Idle
+          </button>
+          <button id="btnTamper" class="btn btn-danger">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+            Tamper Breach
+          </button>
+          <button id="btnAdminReset" class="btn btn-outline">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><circle cx="12" cy="5" r="2"></circle><path d="M12 7v4"></path></svg>
+            Admin Unlock
+          </button>
+        </div>
+      </section>
+
+      <!-- Right Column: Multi-Stage Interactive Simulation Controls -->
+      <section class="simulation-tabs-panel">
+        <div class="panel-header">
+          <h2>Simulation & Hardware Sensor Ingestion</h2>
+        </div>
+
+        <div class="stages-grid">
+
+          <!-- Stage 1: RFID Scanner -->
+          <div class="stage-card">
+            <div class="stage-card-header">
+              <h3>[1] RFID / NFC Scanner</h3>
+              <span class="stage-badge">STAGE 1</span>
+            </div>
+            <input type="text" id="rfidInput" class="input-field" placeholder="Tag UID (e.g. E2806894)" value="E2806894">
+            <div class="btn-group-row">
+              <button id="btnScanAuthRfid" class="btn btn-primary btn-sm">Scan Authorized (E2806894)</button>
+              <button id="btnScanInvalidRfid" class="btn btn-danger btn-sm">Scan Invalid</button>
+            </div>
+            <button id="btnScanCustomRfid" class="btn btn-outline btn-sm">Submit Input Tag</button>
+          </div>
+
+          <!-- Stage 2: Biometric Fingerprint Scanner -->
+          <div class="stage-card">
+            <div class="stage-card-header">
+              <h3>[2] Optical Fingerprint Scanner</h3>
+              <span class="stage-badge">STAGE 2</span>
+            </div>
+            <input type="number" id="fpIdInput" class="input-field" placeholder="Template Slot ID (1..127)" value="1" min="1" max="127">
+            <div class="btn-group-row">
+              <button id="btnScanAuthFp" class="btn btn-primary btn-sm">Scan Enrolled (Slot 1)</button>
+              <button id="btnScanInvalidFp" class="btn btn-danger btn-sm">Scan Mismatch</button>
+            </div>
+          </div>
+
+          <!-- Stage 3: Facial Biometrics (WebRTC + Synthetic) -->
+          <div class="stage-card">
+            <div class="stage-card-header">
+              <h3>[3] Computer Vision Face Scanner</h3>
+              <span class="stage-badge">STAGE 3</span>
+            </div>
+            <div class="cam-preview-box">
+              <div class="cam-crosshair"></div>
+              <video id="camVideo" autoplay playsinline muted style="display: none;"></video>
+              <canvas id="camCanvas" style="display: none;"></canvas>
+            </div>
+            <div class="btn-group-row">
+              <button id="btnStartCam" class="btn btn-outline btn-sm">Start Webcam</button>
+              <button id="btnCaptureFace" class="btn btn-primary btn-sm">Capture & Scan</button>
+            </div>
+            <div class="btn-group-row">
+              <button id="btnAuthFaceMock" class="btn btn-primary btn-sm">Mock Operator (777)</button>
+              <button id="btnIntruderFaceMock" class="btn btn-danger btn-sm">Mock Intruder (999)</button>
+            </div>
+          </div>
+
+          <!-- Stage 4: Secret Keypad -->
+          <div class="stage-card">
+            <div class="stage-card-header">
+              <h3>[4] Secret Password Keypad</h3>
+              <span class="stage-badge">STAGE 4</span>
+            </div>
+            <input type="password" id="pwdInput" class="input-field" placeholder="Enter Secret Passphrase" value="VaultMasterKey#2026!">
+            <div class="btn-group-row">
+              <button id="btnInjectAuthPwd" class="btn btn-primary btn-sm">Inject Valid Key</button>
+              <button id="btnInjectWrongPwd" class="btn btn-danger btn-sm">Inject Bad Key</button>
+            </div>
+            <button id="btnSubmitPwd" class="btn btn-outline btn-sm">Submit Entered Key</button>
+          </div>
+
+          <!-- Stage 5: Acoustic Voice Authentication -->
+          <div class="stage-card" style="grid-column: 1 / -1;">
+            <div class="stage-card-header">
+              <h3>[5] Acoustic Voice Biometric Verifier</h3>
+              <span class="stage-badge">STAGE 5</span>
+            </div>
+            <input type="text" id="voicePhraseInput" class="input-field" placeholder="Challenge Phrase" value="OPEN SESAME OVERENGINEERED">
+            <div class="btn-group-row">
+              <button id="btnRecordMic" class="btn btn-outline btn-sm">Record Browser Mic (2s)</button>
+              <button id="btnAuthVoiceMock" class="btn btn-primary btn-sm">Mock Voice Operator (Seed 1)</button>
+              <button id="btnIntruderVoiceMock" class="btn btn-danger btn-sm">Mock Voice Intruder (Seed 2)</button>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+    </div>
+
+    <!-- ========================================================================
+         Bottom Panel: Live Cryptographic Audit Trail
+         ======================================================================== -->
+    <section class="audit-panel">
+      <div class="panel-header">
+        <h2>Cryptographic SHA-256 Hash-Chained Audit Trail</h2>
+        <div class="audit-header-actions">
+          <div id="integrityPill" class="integrity-pill">
+            <span class="status-dot"></span>
+            <span id="integrityStatusText">CHAIN VALID (SHA-256)</span>
+          </div>
+          <button id="btnRefreshLogs" class="btn btn-outline btn-sm">Refresh Logs</button>
+        </div>
+      </div>
+
+      <div class="audit-table-wrapper">
+        <table class="audit-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>TIMESTAMP (UTC)</th>
+              <th>STAGE</th>
+              <th>EVENT TYPE</th>
+              <th>USER</th>
+              <th>ENTRY HASH (SHA-256)</th>
+              <th>PREVIOUS HASH LINK</th>
+            </tr>
+          </thead>
+          <tbody id="auditTableBody">
+            <!-- Dynamic rows populated via WebSocket / REST -->
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Toast Notification Container -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <!-- Client Application Script -->
+  <script src="/static/js/vault_client.js"></script>
+</body>
+</html>
