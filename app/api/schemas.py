@@ -138,3 +138,12 @@ class AuditLogResponseSchema(BaseModel):
     is_chain_valid: bool
     integrity_error: Optional[str] = None
     logs: List[AuditLogEntrySchema]
+
+
+class MotorDriveRequest(BaseModel):
+    """Payload for manual 4-motor getaway drive command."""
+
+    direction: str = Field(default="FORWARD", description="Direction: FORWARD, BACKWARD, LEFT, RIGHT")
+    duration_ms: int = Field(default=3000, ge=100, le=60000, description="Drive duration in ms")
+    speed: int = Field(default=255, ge=0, le=255, description="Motor speed PWM duty cycle (0-255)")
+

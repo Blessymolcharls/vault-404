@@ -378,6 +378,37 @@ def test_microphone_recording() -> bool:
 
 
 # ============================================================================
+# Diagnostic Step 9: 4-Motor Driver Getaway Chassis Test
+# ============================================================================
+
+
+async def test_motor_drivers(port: Optional[str] = None) -> bool:
+    print_banner("Step 9: 4-Motor Driver Getaway Test (Dual H-Bridge)")
+    from app.adapters.esp32_hardware import ESP32SerialAdapter
+
+    adapter = ESP32SerialAdapter(port=port, baudrate=115200)
+    connected = await adapter.initialize()
+    if not connected:
+        print_fail("Could not establish serial link for motor test.")
+        return False
+
+    print_info("Testing FORWARD getaway drive for 2 seconds...")
+    await adapter.drive_motors("FORWARD", duration_ms=2000, speed=255)
+    await asyncio.sleep(2.2)
+
+    print_info("Testing REVERSE drive for 1.5 seconds...")
+    await adapter.drive_motors("BACKWARD", duration_ms=1500, speed=200)
+    await asyncio.sleep(1.7)
+
+    print_info("Sending STOP command...")
+    await adapter.stop_motors()
+    print_pass("4-Motor getaway chassis drive sequences executed.")
+
+    adapter.release()
+    return True
+
+
+# ============================================================================
 # Main Diagnostic Orchestrator
 # ============================================================================
 
@@ -410,6 +441,9 @@ async def run_diagnostics(port: Optional[str] = None, dry_run: bool = False) -> 
 
         # 7. RFID Reader
         results["MFRC522 RFID (SPI)"] = await test_rfid_reader(port=port, interactive=True)
+
+        # 8. 4-Motor Getaway Chassis
+        results["4-Motor Getaway Chassis"] = await test_motor_drivers(port=port)
 
     # Summary Report
     print(f"\n{CYAN}{BOLD}{'=' * 70}{RESET}")

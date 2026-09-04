@@ -225,6 +225,29 @@ class ESP32SerialAdapter(HardwareInterface):
         }
         await self._send_command(cmd)
 
+    async def drive_motors(
+        self, direction: str = "FORWARD", duration_ms: int = 3000, speed: int = 255
+    ) -> bool:
+        """Send DRIVE_MOTORS command to activate 4-motor getaway chassis."""
+        cmd = {
+            "cmd": "DRIVE_MOTORS",
+            "command": "DRIVE_MOTORS",
+            "direction": direction.upper(),
+            "duration_ms": duration_ms,
+            "speed": max(0, min(255, speed)),
+            "parameters": {
+                "direction": direction.upper(),
+                "duration_ms": duration_ms,
+                "speed": max(0, min(255, speed)),
+            },
+        }
+        return await self._send_command(cmd)
+
+    async def stop_motors(self) -> bool:
+        """Send STOP_MOTORS command to halt 4-motor getaway chassis."""
+        cmd = {"cmd": "STOP_MOTORS", "command": "STOP_MOTORS"}
+        return await self._send_command(cmd)
+
     # ========================================================================
     # Event Listener Registration
     # ========================================================================
@@ -310,6 +333,9 @@ class ESP32SerialAdapter(HardwareInterface):
             "LOCK_CONFIRMED": HardwareEventType.LOCK_STATUS_CHANGED,
             "TAMPER_TRIGGERED": HardwareEventType.TAMPER_TRIGGERED,
             "TAMPER_DETECTED": HardwareEventType.TAMPER_TRIGGERED,
+            "MOTOR_ACTIVATED": HardwareEventType.MOTOR_ACTIVATED,
+            "MOTOR_STATUS": HardwareEventType.MOTOR_ACTIVATED,
+            "MOTOR_STOPPED": HardwareEventType.MOTOR_STOPPED,
             "HARDWARE_ERROR": HardwareEventType.HARDWARE_ERROR,
         }
 

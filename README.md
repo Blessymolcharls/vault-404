@@ -65,6 +65,8 @@
 | **Active Buzzer** | Audio Feedback | **GPIO 21** | PWM tone generator (1000Hz, 2000Hz, etc.) |
 | **MFRC522 RFID** | SDA(SS) / SCK / MOSI / MISO / RST | **GPIO 5, 18, 23, 19, 4** | SPI Bus ($3.3\text{V}$) |
 | **AS608 Fingerprint** | RX2 / TX2 | **GPIO 16, 17** | Hardware Serial 2 (57600 Baud) |
+| **4-Motor Driver (Left)** | IN1 / IN2 (Left Motors Forward / Rev) | **GPIO 16, 17** | Dual H-Bridge (L298N / TB6612FNG) |
+| **4-Motor Driver (Right)** | IN3 / IN4 (Right Motors Forward / Rev) | **GPIO 0, 1** | Dual H-Bridge (L298N / TB6612FNG) |
 | **Tamper Switch** | Interrupt | **GPIO 34** | Active-Low interrupt (triggers lockout) |
 
 ---

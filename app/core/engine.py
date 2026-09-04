@@ -860,6 +860,7 @@ class VaultAuthEngine:
 
         # 2. Coordinate Hardware Actuation & Display Updates
         if new_state == VaultState.IDLE:
+            await self._hardware.stop_motors()
             await self._hardware.set_lock(True)
             await self._hardware.trigger_alarm(0)
             await self._hardware.set_display(
@@ -872,6 +873,7 @@ class VaultAuthEngine:
             )
 
         elif new_state == VaultState.AWAITING_RFID:
+            await self._hardware.stop_motors()
             await self._hardware.set_lock(True)
             await self._hardware.set_display(
                 DisplayStatus(
@@ -926,12 +928,17 @@ class VaultAuthEngine:
             self._schedule_stage_timeout(self._config.stage_timeout_seconds)
 
         elif new_state == VaultState.UNLOCKED:
-            logger.info("🎉 All 4 stages passed! Actuating solenoid to UNLOCKED state.")
+            logger.info("🎉 All 4 stages passed! Actuating solenoid and 4-motor getaway sequence.")
             await self._hardware.set_lock(False)
+            await self._hardware.drive_motors(
+                direction="FORWARD",
+                duration_ms=int(self._config.auto_relock_delay_seconds * 1000),
+                speed=255,
+            )
             await self._hardware.set_display(
                 DisplayStatus(
                     line1="VAULT UNLOCKED",
-                    line2="ACCESS GRANTED",
+                    line2="GETAWAY ACTIVE",
                     led_color=LedColor.GREEN,
                     buzzer=True,
                     duration_ms=3000,
@@ -940,7 +947,8 @@ class VaultAuthEngine:
             self._schedule_auto_relock(self._config.auto_relock_delay_seconds)
 
         elif new_state == VaultState.LOCKOUT:
-            logger.critical("🚨 Security lockout active! Actuating lock and firing alarm siren.")
+            logger.critical("🚨 Security lockout active! Actuating lock, stopping motors, and firing alarm siren.")
+            await self._hardware.stop_motors()
             await self._hardware.set_lock(True)
             await self._hardware.trigger_alarm(5000)
             await self._hardware.set_display(
