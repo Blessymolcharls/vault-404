@@ -20,13 +20,36 @@
 - Member 2: V M Samerath Kumar - Muthoot Institute of Technology and Science
 
 ### Project Description
-An intentionally over-engineered, hardware-decoupled, 4-stage sequential authentication system backed by computer vision embeddings, acoustic speech feature analysis, Argon2id cryptography, and tamper-evident SHA-256 hash-chained audit trails.
+**Vault-404** is an intentionally over-engineered multi-factor security vault combining IoT, 13.56MHz RFID, OpenCV face recognition, matrix keypad PIN authentication, acoustic voice verification, and SHA-256 cryptographic audit logging.
+
+The authentication process enforces a strict sequential pipeline:
+$$\text{RFID} \longrightarrow \text{Face Verification} \longrightarrow \text{Keypad PIN} \longrightarrow \text{Voice Verification}$$
+
+- **Multi-Modal Biometrics**: Face verification includes Laplacian variance anti-spoofing analysis, while the acoustic engine verifies speaker timbre and passphrases.
+- **Cryptographic Rigor**: Matrix keypad PINs are verified using memory-hard **Argon2id** hashing.
+- **Physical Getaway Actuation**: Once all authentication factors are cleared, the servo lock actuator disengages, and the 4-motor getaway chassis physically propels the vault away to reveal the secured contents.
+- **Fail-Secure Defense**: Any invalid input, out-of-order stage submission, or timeout triggers immediate sequence termination, security lockout, and audible buzzer alarms.
+- **Tamper-Evident Ledger**: A FastAPI backend manages the asynchronous finite state machine while the ESP32 controls hardware peripherals over high-speed JSON-RPC UART, logging every event into a cryptographic SHA-256 hash-chained SQLite audit ledger.
+
+*Vault-404 turns authentication into a physical experience: prove your identity, and the vault literally gets out of your way.*
 
 ### The Problem (that doesn't exist)
-Opening physical boxes and vaults is simply too easy and convenient. People can just use a single key, or worse, just pull a handle. This lack of friction means anyone can access their own belongings without going through a grueling, multi-modal biometric and cryptographic gauntlet.
+Most security systems are designed to make valuable objects safer and easier to access for authorized users. However, over-engineering a system can make it unnecessarily complex, inconvenient, and impractical.
+
+**Vault-404** addresses this completely unnecessary problem: *how to make a useless vault as difficult as possible to access.* The vault enforces an arduous four-step verification gauntlet to authenticate the user, despite possessing a minuscule storage capacity that cannot practically hold anything useful. To maximize inconvenience, even after the operator successfully clears all four biometric and cryptographic gauntlets, the vault activates motorized wheels and literally drives away from the user.
+
+This project deliberately showcases the absurdity of excessive security, extreme multi-modal verification, and engineering complexity when there is zero practical justification.
 
 ### The Solution (that nobody asked for)
-We built a sequential 4-stage authentication system (RFID -> Face Scan -> Keypad Password -> Voice Phrase) that forces the user to prove their identity in four distinct ways before a servo lock actuator is disengaged and a 4-motor getaway chassis is triggered. If they fail any step, they get locked out!
+**Vault-404 is an intentionally over-engineered security system designed to solve a completely unnecessary problem.**
+
+The vault uses four-step user verification before granting access. Once all four authentication stages are successfully completed, instead of simply opening, the vault activates its motors and physically moves away from the user.
+
+Combined with its small and impractical storage space, the system makes the entire authentication process unnecessarily complicated and pointless.
+
+The solution demonstrates the humorous concept of over-engineering, where advanced security and automation are implemented without considering practicality or user convenience.
+
+*Vault-404 doesn't just secure your belongings — it makes sure you can't reach them.*
 
 ## Technical Details
 ### Technologies/Components Used
@@ -74,9 +97,24 @@ Open **`http://localhost:8000`** in your browser to access the Cyberpunk Operato
 For Software:
 
 # Screenshots
-| Cyberpunk Live Operator HUD | Multi-Modal Sensor Ingestion |
-| :---: | :---: |
-| ![HUD Live Dashboard](https://github.com/user-attachments/assets/8920b256-2ba8-4988-b824-5351134eb4bd) | *Real-time Stage Progression, Hardware Telemetry Stream, and Cryptographic Audit Log Ledger* |
+
+#### 1. Cyberpunk Live Operator Dashboard (Standby & Diagnostic HUD)
+![Cyberpunk Live Operator Dashboard](docs/images/dashboard_standby.png)
+> *The central command console showing live WebSocket telemetry, peripheral diagnostics, stage progression track, multi-modal sensor ingestion panels (RFID, Face CV, Keypad PIN, Acoustic Voice), and the SHA-256 hash-chained forensic audit trail.*
+
+#### 2. Sequential Stage Progression — Stage 3: Awaiting Keypad PIN
+![Sequential Stage Progression](docs/images/stage3_keypad.png)
+> *Live hardware synchronization during Stage 3 (`AWAITING_KEYPAD_PIN`). The OLED display prompts for matrix keypad input while the live buffer securely captures keystrokes until terminated by `#` for Argon2id cryptographic verification.*
+
+#### 3. Access Denied & Security Chain Termination Overlay
+![Access Denied Overlay](docs/images/access_denied.png)
+> *Immediate fail-secure reaction when unauthorized credentials (e.g. keyfob UID or incorrect PIN) are submitted. The entire sequence is terminated, the servo lock remains engaged, and the system resets to standby.*
+
+#### 4. Authenticated Clearance & Actuator Release Overlay
+![Authenticated Clearance Overlay](docs/images/access_granted.png)
+> *Visual confirmation when all 4 sequential security stages are successfully cleared (`RFID Scan ✓`, `Face Biometrics ✓`, `Secret Key ✓`, `Voice Phrase ✓`), disengaging the servo lock actuator and triggering the 4-motor getaway chassis.*
+
+---
 
 # Diagrams
 
@@ -265,15 +303,25 @@ For Hardware:
 | **Active Buzzer** | SIG | **GPIO 21** | Audio Feedback & Audible Alarm |
 
 # Build Photos
-![Team](Add photo of your team here)
+*Hardware chassis, dual H-bridge motor integration, and ESP32 control board photographs are available in the project drive media folder.*
+
+### Team Photo
+<p align="center">
+  <img src="docs/images/team_photo.jpg" alt="Team Eclipse - Blessy Mol Charls & V M Samerath Kumar" width="600" style="border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.3);" />
+  <br>
+  <em>Team Eclipse — Blessy Mol Charls & V M Samerath Kumar</em>
+</p>
 
 ### Project Demo
 # Video
-[Add your demo video link here]
-*Explain what the video demonstrates*
+[![Vault-404 Demonstration Video](https://img.shields.io/badge/Google_Drive-Watch_Demo_Video-blue?logo=google-drive&logoColor=white&style=for-the-badge)](https://drive.google.com/file/d/1uo9b2-WptjG9pEOimBNHWVY_SLei_Is5/view?usp=drivesdk)
+
+*The video demonstrates the complete live physical gauntlet in action: sequential MFRC522 RFID scanning, OpenCV biometric face recognition, matrix keypad PIN input with Argon2id cryptographic verification, acoustic vocal passphrase verification, micro-servo lock actuation, and the 4-motor getaway chassis getaway sequence.*
 
 # Additional Demos
-[Add any extra demo materials/links]
+[![Vault-404 Project Drive Folder](https://img.shields.io/badge/Google_Drive-Additional_Media_%26_Clips-green?logo=google-drive&logoColor=white&style=for-the-badge)](https://drive.google.com/drive/folders/1B2D2R4llDLvXmm8CeFvRjq37XF2q1ZJ1)
+
+*Access the shared project folder containing supplementary demonstration footage, hardware chassis assembly clips, and live testing media.*
 
 ## Additional Project Details
 
@@ -324,6 +372,8 @@ vault-404/
 │   ├── interfaces/                # Abstract Hardware & Subsystem Contracts (ABCs)
 │   ├── static/                    # Cyberpunk Web Operator Console
 │   └── vision/                    # Computer Vision Subsystem
+├── docs/
+│   └── images/                    # UI Screenshots & Team Build Photos
 ├── firmware/                      # ESP32 Embedded Microcontroller Project
 ├── cli_simulator.py               # Terminal Interactive ANSI CLI Testing Harness
 ├── requirements.txt               # Locked Production Dependencies
