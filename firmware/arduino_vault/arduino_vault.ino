@@ -29,12 +29,11 @@
 #define BUZZER_PIN       21     // Active Buzzer / Audio Tone (PWM)
 
 // 4-Motor Getaway Chassis (Dual H-Bridge / L298N Controller)
-// Left Motor Pair (Front & Rear Left)
-#define M_LEFT_IN1       16     // Left Motors Forward (IN1)
-#define M_LEFT_IN2       17     // Left Motors Reverse (IN2)
-// Right Motor Pair (Front & Rear Right)
-#define M_RIGHT_IN3      0      // Right Motors Forward (IN3)
-#define M_RIGHT_IN4      1      // Right Motors Reverse (IN4)
+// Left & Right Motor Pairs driven via dual H-bridge
+#define M_LEFT_IN1       16     // Motors Forward (IN1)
+#define M_LEFT_IN2       17     // Motors Reverse (IN2)
+#define M_RIGHT_IN3      -1     // Reserved (preserved for serial UART TX0/RX0)
+#define M_RIGHT_IN4      -1
 
 // MFRC522 RFID (SPI Bus)
 #define RFID_SS_PIN      5      // SDA / SS
@@ -174,8 +173,8 @@ void setAlarm(unsigned long durationMs) {
 void stopMotors() {
     digitalWrite(M_LEFT_IN1, LOW);
     digitalWrite(M_LEFT_IN2, LOW);
-    digitalWrite(M_RIGHT_IN3, LOW);
-    digitalWrite(M_RIGHT_IN4, LOW);
+    if (M_RIGHT_IN3 >= 0) digitalWrite(M_RIGHT_IN3, LOW);
+    if (M_RIGHT_IN4 >= 0) digitalWrite(M_RIGHT_IN4, LOW);
     motorsActive = false;
     currentMotorDirection = "STOPPED";
     motorStopTimestamp = 0;
@@ -190,23 +189,23 @@ void driveMotors(String direction, unsigned long durationMs = 3000) {
     if (direction == "FORWARD") {
         digitalWrite(M_LEFT_IN1, HIGH);
         digitalWrite(M_LEFT_IN2, LOW);
-        digitalWrite(M_RIGHT_IN3, HIGH);
-        digitalWrite(M_RIGHT_IN4, LOW);
+        if (M_RIGHT_IN3 >= 0) digitalWrite(M_RIGHT_IN3, HIGH);
+        if (M_RIGHT_IN4 >= 0) digitalWrite(M_RIGHT_IN4, LOW);
     } else if (direction == "BACKWARD" || direction == "REVERSE") {
         digitalWrite(M_LEFT_IN1, LOW);
         digitalWrite(M_LEFT_IN2, HIGH);
-        digitalWrite(M_RIGHT_IN3, LOW);
-        digitalWrite(M_RIGHT_IN4, HIGH);
+        if (M_RIGHT_IN3 >= 0) digitalWrite(M_RIGHT_IN3, LOW);
+        if (M_RIGHT_IN4 >= 0) digitalWrite(M_RIGHT_IN4, HIGH);
     } else if (direction == "LEFT") {
         digitalWrite(M_LEFT_IN1, LOW);
         digitalWrite(M_LEFT_IN2, HIGH);
-        digitalWrite(M_RIGHT_IN3, HIGH);
-        digitalWrite(M_RIGHT_IN4, LOW);
+        if (M_RIGHT_IN3 >= 0) digitalWrite(M_RIGHT_IN3, HIGH);
+        if (M_RIGHT_IN4 >= 0) digitalWrite(M_RIGHT_IN4, LOW);
     } else if (direction == "RIGHT") {
         digitalWrite(M_LEFT_IN1, HIGH);
         digitalWrite(M_LEFT_IN2, LOW);
-        digitalWrite(M_RIGHT_IN3, LOW);
-        digitalWrite(M_RIGHT_IN4, HIGH);
+        if (M_RIGHT_IN3 >= 0) digitalWrite(M_RIGHT_IN3, LOW);
+        if (M_RIGHT_IN4 >= 0) digitalWrite(M_RIGHT_IN4, HIGH);
     } else {
         stopMotors();
         return;
@@ -365,15 +364,23 @@ void pollKeypad() {
     }
 }
 
+unsigned long lastRfidScanMs = 0;
+
 void pollRFID() {
-    // Check if a card or tag is present in the RF field
-    if (!rfid.PICC_IsNewCardPresent()) {
+    // Non-blocking debounce to prevent flooding repeated reads of the same card
+    if (millis() - lastRfidScanMs < 400) {
         return;
     }
 
-    // Read card serial UID bytes
-    if (!rfid.PICC_ReadCardSerial()) {
-        return;
+    // Check for cards present or active in field
+    if (!rfid.PICC_IsNewCardPresent()) {
+        if (!rfid.PICC_ReadCardSerial()) {
+            return;
+        }
+    } else {
+        if (!rfid.PICC_ReadCardSerial()) {
+            return;
+        }
     }
 
     if (rfid.uid.size == 0) {
@@ -388,6 +395,7 @@ void pollRFID() {
     }
     cardUid.toUpperCase();
 
+    lastRfidScanMs = millis();
     playKeyClickTone();
 
     JsonDocument payload;
@@ -396,8 +404,11 @@ void pollRFID() {
     payload["size"] = rfid.uid.size;
     emitEvent("RFID_SCANNED", payload);
 
+    // Halt PICC and reset antenna registers to ensure continuous detection
     rfid.PICC_HaltA();
     rfid.PCD_StopCrypto1();
+    rfid.PCD_SetAntennaGain(rfid.RxGain_max);
+    rfid.PCD_AntennaOn();
 }
 
 void updateTimers() {
@@ -475,8 +486,14 @@ void setup() {
     lockServo.write(LOCKED_POSITION);
 
     // 4. Initialize MFRC522 RFID on SPI Bus with Max Antenna Gain
+    pinMode(RFID_RST_PIN, OUTPUT);
+    digitalWrite(RFID_RST_PIN, LOW);
+    delay(20);
+    digitalWrite(RFID_RST_PIN, HIGH);
+    delay(20);
+
     SPI.begin(RFID_SCK_PIN, RFID_MISO_PIN, RFID_MOSI_PIN, RFID_SS_PIN);
-    rfid.PCD_Init();
+    rfid.PCD_Init(RFID_SS_PIN, RFID_RST_PIN);
     delay(50);
     rfid.PCD_SetAntennaGain(rfid.RxGain_max);
     rfid.PCD_AntennaOn();

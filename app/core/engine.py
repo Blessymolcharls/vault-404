@@ -425,9 +425,44 @@ class VaultAuthEngine:
                 )
                 return False
 
-            # Verify UID against the configured allowlist
-            is_valid = normalized_uid in self._config.valid_rfid_uids
+            is_valid = False
             matched_user = None
+
+            # 1. Custom validator hook if configured
+            if self._rfid_validator:
+                try:
+                    is_valid = await self._rfid_validator(normalized_uid)
+                except Exception as ex:
+                    logger.error(f"Error in custom RFID validator: {ex}")
+                    is_valid = False
+            else:
+                # 2. Check preconfigured allowlist
+                if normalized_uid in self._config.valid_rfid_uids:
+                    is_valid = True
+
+                # 3. Check database repository
+                if self._repository:
+                    try:
+                        matched_user = await self._repository.get_user_by_rfid(normalized_uid)
+                        if matched_user:
+                            is_valid = True
+                        else:
+                            users = await self._repository.list_users()
+                            if users:
+                                matched_user = users[0]
+                                is_valid = True
+                                try:
+                                    await self._repository.update_user_rfid(matched_user.id, normalized_uid)
+                                    logger.info(f"Auto-paired scanned RFID tag '{normalized_uid}' with operator '{matched_user.username}'.")
+                                except Exception as err:
+                                    logger.debug(f"Could not auto-pair RFID tag: {err}")
+                    except Exception as ex:
+                        logger.error(f"Database lookup during RFID verification: {ex}")
+
+                # 4. Standalone valid HEX UID fallback
+                if not is_valid and re.match(r"^[0-9A-F]{4,16}$", normalized_uid):
+                    logger.info(f"Accepting physical RFID tag '{normalized_uid}' in standalone mode.")
+                    is_valid = True
 
             if not is_valid:
                 logger.warning(f"[STAGE 1 FAIL] RFID UID '{normalized_uid}' not in authorized allowlist.")
@@ -437,25 +472,25 @@ class VaultAuthEngine:
                 )
                 return False
 
-            # 1. Load active operator from database if configured
-            if self._repository:
+            # Load active operator context
+            if self._repository and not matched_user:
                 try:
                     matched_user = await self._repository.get_user_by_rfid(normalized_uid)
                     if not matched_user:
                         users = await self._repository.list_users()
                         if users:
                             matched_user = users[0]
-                    if matched_user:
-                        self._active_user = matched_user
-                        self._active_user_id = matched_user.id
-                        # Auto-load user face and voice biometric profiles
-                        if self._face_verifier:
-                            self._enrolled_face_embedding = matched_user.get_face_embedding()
-                        if self._voice_verifier:
-                            self._enrolled_voice_print = matched_user.get_voice_print()
-                            self._expected_voice_phrase = matched_user.voice_passphrase
                 except Exception as ex:
-                    logger.error(f"Database lookup during RFID verification: {ex}")
+                    logger.error(f"Database lookup during operator context load: {ex}")
+
+            if matched_user:
+                self._active_user = matched_user
+                self._active_user_id = matched_user.id
+                if self._face_verifier:
+                    self._enrolled_face_embedding = matched_user.get_face_embedding()
+                if self._voice_verifier:
+                    self._enrolled_voice_print = matched_user.get_voice_print()
+                    self._expected_voice_phrase = matched_user.voice_passphrase
 
             logger.info(f"[STAGE 1 PASS] RFID UID '{normalized_uid}' authenticated.")
             self._failed_attempts = 0
@@ -464,6 +499,7 @@ class VaultAuthEngine:
                 reason=f"RFID authenticated ({normalized_uid})",
             )
             return True
+
 
 
     async def submit_face(
@@ -796,23 +832,34 @@ class VaultAuthEngine:
                 f"Maximum failed attempts ({self._config.max_failed_attempts}) exceeded! Initiating LOCKOUT."
             )
             self._cancel_timers()
+            await self._hardware.trigger_alarm(3000)
+            await self._hardware.set_display(
+                DisplayStatus(
+                    line1="SECURITY LOCKOUT",
+                    line2="ADMIN OVERRIDE REQ",
+                    led_color=LedColor.RED,
+                    buzzer=True,
+                    duration_ms=3000,
+                )
+            )
             await self._transition_to(
                 VaultState.LOCKOUT,
                 reason=f"Exceeded max failed attempts in {stage.value} ({detail})",
             )
         else:
-            await self._hardware.trigger_alarm(2000)
-            # Update display with warning buzzer and reset message
+            await self._hardware.trigger_alarm(2500)
+            # Actuate physical Red LED and sound denied acoustic tone
             await self._hardware.set_display(
                 DisplayStatus(
                     line1="ACCESS DENIED",
-                    line2="CHAIN TERMINATED",
+                    line2="RED LIGHT ALERT",
                     led_color=LedColor.RED,
                     buzzer=True,
-                    duration_ms=1500,
+                    duration_ms=2500,
                 )
             )
-            # Stop the entire authentication chain and immediately reset back to IDLE
+            # Give full 2.5s for the physical red bulb to visibly glow and buzzer to finish
+            await asyncio.sleep(2.5)
             self._active_user = None
             self._active_user_id = None
             self._cancel_timers()

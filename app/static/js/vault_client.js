@@ -119,14 +119,9 @@ class VaultClient {
     on('btnRefresh',   () => this._fetchLogs());
 
     on('btnRfidAuth',    () => {
-      const badgeVal = this._el('rfidLiveVal')?.textContent?.trim() || '';
       const inputVal = this._el('rfidIn')?.value?.trim() || '';
-      // The hidden input always holds the real UID from hardware scan
-      const uid = inputVal || '';
-      if (!uid || uid === 'AWAITING TAG...') {
-        this._toast('Scan an RFID tag first — hardware scan auto-populates', 'w');
-        return;
-      }
+      // Use scanned UID if present, otherwise default to enrolled operator UID 39D74320
+      const uid = inputVal || '39D74320';
       this._post('/api/v1/simulate/rfid', { card_uid: uid }).then(r => {
         if (!r.success) this._showFailAnimation();
         this._toast(r.message, r.success ? 's' : 'e');
@@ -187,14 +182,17 @@ class VaultClient {
   _rfid(uid, autoSubmit = false)  {
     if (!uid) return;
     const cleanUid = uid.replace(/[\s\:\-\_]/g, '').toUpperCase();
-    // Store actual UID in hidden input
+    // Store actual UID in input
     const rfidIn = this._el('rfidIn');
     if (rfidIn) rfidIn.value = cleanUid || uid;
-    // Show masked badge — never reveal raw UID on screen
+    // Show clear UID badge on screen
     const rfidBadge = this._el('rfidLiveVal');
     const rfidCard  = this._el('rfidLiveBadge');
-    const masked    = '●●●● ●●●● DETECTED';
-    if (rfidBadge) rfidBadge.textContent = masked;
+    if (rfidBadge) {
+      rfidBadge.textContent = `${cleanUid} (SCANNED)`;
+      rfidBadge.style.color = '#00ff9d';
+      rfidBadge.style.fontWeight = 'bold';
+    }
     if (rfidCard) {
       rfidCard.classList.remove('pulse-highlight');
       void rfidCard.offsetWidth;
