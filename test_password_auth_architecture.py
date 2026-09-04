@@ -208,4 +208,11 @@ async def test_rfid_mifare_1kb_uid_authentication():
     assert res is True
     assert engine.state == VaultState.AWAITING_FACE
 
+    # Verify keyfob / unauthorized keys are rejected and reset state to IDLE
+    await engine.reset_to_idle()
+    await engine.start_authentication()
+    res_key = await engine.submit_rfid("89E3F31F")
+    assert res_key is False
+    assert engine.state == VaultState.IDLE
+
     await engine.shutdown()

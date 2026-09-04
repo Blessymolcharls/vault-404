@@ -20,26 +20,26 @@
 - Member 2: V M Samerath Kumar - Muthoot Institute of Technology and Science
 
 ### Project Description
-An intentionally over-engineered, hardware-decoupled, 5-stage sequential authentication system backed by computer vision embeddings, acoustic speech feature analysis, Argon2id cryptography, and tamper-evident SHA-256 hash-chained audit trails.
+An intentionally over-engineered, hardware-decoupled, 4-stage sequential authentication system backed by computer vision embeddings, acoustic speech feature analysis, Argon2id cryptography, and tamper-evident SHA-256 hash-chained audit trails.
 
 ### The Problem (that doesn't exist)
 Opening physical boxes and vaults is simply too easy and convenient. People can just use a single key, or worse, just pull a handle. This lack of friction means anyone can access their own belongings without going through a grueling, multi-modal biometric and cryptographic gauntlet.
 
 ### The Solution (that nobody asked for)
-We built a sequential 5-stage authentication system (RFID -> Fingerprint -> Face Scan -> Password -> Voice Phrase) that forces the user to prove their identity in five distinct ways before a simple solenoid relay is triggered. If they fail any step, they get locked out!
+We built a sequential 4-stage authentication system (RFID -> Face Scan -> Keypad Password -> Voice Phrase) that forces the user to prove their identity in four distinct ways before a servo lock actuator is disengaged and a 4-motor getaway chassis is triggered. If they fail any step, they get locked out!
 
 ## Technical Details
 ### Technologies/Components Used
 For Software:
 - **Languages used**: Python 3.10+, JavaScript (Vanilla), HTML5, CSS3, C/C++
 - **Frameworks used**: FastAPI
-- **Libraries used**: OpenCV, SQLAlchemy 2.0, WebRTC
-- **Tools used**: PlatformIO, pytest
+- **Libraries used**: OpenCV, SQLAlchemy 2.0, SoundDevice, Argon2-cffi, WebSockets
+- **Tools used**: PlatformIO, pytest, Arduino IDE
 
 For Hardware:
-- **List main components**: ESP32 Microcontroller, MFRC522 RFID Reader, AS608/R503 Fingerprint Sensor, I2C LCD (16x2 / 20x4), Solenoid Relay Module, Active Buzzer, RGB LED Beacon, Chassis Tamper Switch
-- **List specifications**: 13.56MHz RFID, Optical Fingerprint 1..127 IDs, I2C Display, 115200 Baud JSON Frame RPC
-- **List tools required**: PlatformIO for firmware compilation
+- **List main components**: ESP32 Dev Module Microcontroller, MFRC522 RFID 13.56MHz SPI Reader, 4x4 Matrix Membrane Keypad, Micro Servo 9g Lock Actuator, Dual H-Bridge Motor Driver (L298N) with 4-Motor Getaway Chassis, Active Buzzer Module, Green Status LED, Red Status LED
+- **List specifications**: 13.56MHz SPI RFID (Mifare 1KB), 16-Key Matrix Matrix Scan, 50Hz PWM Servo Angle Actuation, 115200 Baud Framed JSON-RPC UART
+- **List tools required**: Arduino IDE / PlatformIO for ESP32 firmware flashing, USB-to-UART bridge
 
 ### Implementation
 For Software:
@@ -73,53 +73,99 @@ Open **`http://localhost:8000`** in your browser to access the Cyberpunk Operato
 ### Project Documentation
 For Software:
 
-# Screenshots (Add at least 3)
-![Screenshot1](Add screenshot 1 here with proper name)
-*Add caption explaining what this shows*
-
-![Screenshot2](Add screenshot 2 here with proper name)
-*Add caption explaining what this shows*
-
-![Screenshot3](Add screenshot 3 here with proper name)
-*Add caption explaining what this shows*
+# Screenshots
+| Cyberpunk Live Operator HUD | Multi-Modal Sensor Ingestion |
+| :---: | :---: |
+| ![HUD Live Dashboard](https://github.com/user-attachments/assets/8920b256-2ba8-4988-b824-5351134eb4bd) | *Real-time Stage Progression, Hardware Telemetry Stream, and Cryptographic Audit Log Ledger* |
 
 # Diagrams
-**System Architecture**
-```text
-                                  ┌──────────────────────────────────────────────┐
-                                  │   Cyberpunk Operator Web Dashboard (HUD)     │
-                                  │   (Vanilla JS, HTML5, CSS3, WebSockets)      │
-                                  └──────────────────────┬───────────────────────┘
-                                                         │ HTTP REST & WebSockets (/ws/vault)
-                                                         ▼
-┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                           FastAPI Application Server (:8000)                                           │
-├────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-│                                               VaultAuthEngine (Core FSM)                                               │
-│       IDLE ──► AWAITING_RFID ──► AWAITING_FACE ──► AWAITING_KEYPAD_PIN ──► AWAITING_VOICE ──► UNLOCKED                 │
-├──────────────────────────────────────┬──────────────────────────────────────┬──────────────────────────────────────────┤
-│    Computer Vision Subsystem         │      Acoustic Voice Subsystem        │     Database & Audit Persistence         │
-│    - OpenCVCameraAdapter (cv2)       │      - SoundDeviceAudioAdapter       │     - SQLAlchemy 2.0 Async Session       │
-│    - FaceVerifier (256D Embeddings)  │      - VoiceVerifier (256D Vectors)  │     - Multi-Modal User Credential Store  │
-│    - Laplacian Anti-Spoofing Filter  │      - Welch PSD & Pitch Lag Profile │     - SHA-256 Hash-Chained Audit Logs    │
-├──────────────────────────────────────┴──────────────────────────────────────┴──────────────────────────────────────────┤
-│                                          Production Hardware Serial Adapter                                            │
-│                                                ESP32SerialAdapter                                                      │
-│                                    - High-speed UART (115200 Baud JSON RPC)                                            │
-│                                    - Bidirectional Framed Telemetry & Actuation                                        │
-└─────────────────────────────────────────────────────────────────────────────────────────┬──────────────────────────────┘
-                                                                                          │ USB UART (COM Port / /dev/ttyUSB0)
-                                                                                          ▼
-                                                              ┌──────────────────────────────────────────────────────────┐
-                                                              │            ESP32 Embedded C++ Firmware                   │
-                                                              │  - 4x4 Matrix Keypad (Rows: 13,12,14,27 | Cols: 26,25,33,32)│
-                                                              │  - MFRC522 RFID SPI Reader (GPIO 5, 4, 18, 19, 23)       │
-                                                              │  - AS608 Optical Fingerprint UART2 (GPIO 16, 17)         │
-                                                              │  - Micro Servo Lock Actuator (GPIO 2)                    │
-                                                              │  - Green LED (GPIO 22) & Red LED (GPIO 15)               │
-                                                              │  - Active Buzzer / Tone (GPIO 21)                        │
-                                                              │  - Chassis Tamper Switch Interrupt (GPIO 34)             │
-                                                              └──────────────────────────────────────────────────────────┘
+
+### 1. Finite State Machine (FSM) Sequential Authentication Gauntlet
+```mermaid
+stateDiagram-v2
+    [*] --> IDLE
+    IDLE --> AWAITING_RFID : start_authentication() / Physical Scan
+    AWAITING_RFID --> AWAITING_FACE : Valid RFID Tag (UID 39D74320)
+    AWAITING_RFID --> IDLE : Invalid RFID / Keyfob Denied
+    AWAITING_FACE --> AWAITING_KEYPAD_PIN : Face Matched (Cosine Sim >= 0.85 & Anti-Spoof Pass)
+    AWAITING_FACE --> IDLE : Face Mismatch / Intruder / Blur Fail
+    AWAITING_KEYPAD_PIN --> AWAITING_VOICE : Valid Keypad PIN '#' (Argon2id Verified)
+    AWAITING_KEYPAD_PIN --> IDLE : Incorrect PIN / Timeout (30s)
+    AWAITING_VOICE --> UNLOCKED : Voiceprint Matched (Cosine Sim >= 0.80 & Phrase Match)
+    AWAITING_VOICE --> IDLE : Voice Mismatch / Timeout
+    UNLOCKED --> IDLE : Auto-Relock (10s Delay)
+    
+    AWAITING_RFID --> LOCKOUT : Max Retries Exceeded (3 Failed Attempts)
+    AWAITING_FACE --> LOCKOUT : Max Retries Exceeded (3 Failed Attempts)
+    AWAITING_KEYPAD_PIN --> LOCKOUT : Max Retries Exceeded (3 Failed Attempts)
+    AWAITING_VOICE --> LOCKOUT : Max Retries Exceeded (3 Failed Attempts)
+    LOCKOUT --> IDLE : Emergency Admin Override Code
+```
+
+### 2. End-to-End System Architecture
+```mermaid
+flowchart TD
+    subgraph Frontend["Cyberpunk Operator Web Dashboard (HUD)"]
+        UI["Web Interface (Vanilla JS, HTML5, CSS3)"]
+        WSClient["WebSocket Client (/ws/vault)"]
+        RESTClient["HTTP REST Client (/api/v1/...)"]
+    end
+
+    subgraph Backend["FastAPI Application Server (:8000)"]
+        Router["REST Endpoints & WebSocket Manager"]
+        FSM["VaultAuthEngine (Core Finite State Machine)"]
+        CV["Computer Vision Subsystem (OpenCV + 256D Embeddings)"]
+        Audio["Acoustic Voice Subsystem (SoundDevice + PSD Analysis)"]
+        Auth["Argon2id Hasher & Multi-Modal User Profile Store"]
+        Audit["Forensic SQLite Ledger (SHA-256 Hash Chain)"]
+        Adapter["ESP32SerialAdapter (Production Hardware Link)"]
+    end
+
+    subgraph Microcontroller["ESP32 Embedded C++ Firmware"]
+        ESP32["ESP32 Dev Module (115200 Baud JSON-RPC)"]
+        RFID["MFRC522 RFID SPI Reader (GPIO 5, 4, 18, 19, 23)"]
+        Keypad["4x4 Matrix Keypad (Rows: 13,12,14,27 | Cols: 26,25,33,32)"]
+        Servo["Micro Servo Lock Actuator (GPIO 2)"]
+        Motors["Dual H-Bridge 4-Motor Getaway Chassis (GPIO 16, 17)"]
+        Indicators["Green LED (GPIO 22), Red LED (GPIO 15), Buzzer (GPIO 21)"]
+    end
+
+    UI <--> WSClient
+    UI <--> RESTClient
+    WSClient <--> Router
+    RESTClient <--> Router
+    Router <--> FSM
+    FSM --> CV
+    FSM --> Audio
+    FSM --> Auth
+    FSM --> Audit
+    FSM <--> Adapter
+    Adapter <-->|USB UART 115200 Baud| ESP32
+    ESP32 --> RFID
+    ESP32 --> Keypad
+    ESP32 --> Servo
+    ESP32 --> Motors
+    ESP32 --> Indicators
+```
+
+### 3. ESP32 Hardware Wiring & Peripheral Interconnect
+```mermaid
+graph LR
+    subgraph ESP32["ESP32 Microcontroller Core"]
+        SPI_BUS["SPI Bus: GPIO 5 (SS), 4 (RST), 18 (SCK), 19 (MISO), 23 (MOSI)"]
+        KEYPAD_ROWS["Rows: GPIO 13, 12, 14, 27"]
+        KEYPAD_COLS["Cols: GPIO 26, 25, 33, 32"]
+        SERVO_PIN["PWM Signal: GPIO 2"]
+        MOTOR_PINS["Motor IN1/IN2: GPIO 16, 17"]
+        STATUS_PINS["LED & Buzzer: GPIO 22 (Green), GPIO 15 (Red), GPIO 21 (Tone)"]
+    end
+
+    SPI_BUS <==> RFID_HW["MFRC522 13.56MHz RFID SPI Reader"]
+    KEYPAD_ROWS <==> KEYPAD_HW["4x4 Matrix Membrane Keypad"]
+    KEYPAD_COLS <==> KEYPAD_HW
+    SERVO_PIN ==> SERVO_HW["Micro Servo Lock Actuator (0° Locked / 90° Unlocked)"]
+    MOTOR_PINS ==> MOTOR_HW["Dual H-Bridge L298N (4-Motor Getaway Chassis)"]
+    STATUS_PINS ==> IND_HW["Status LEDs (Green/Red) & Active Buzzer"]
 ```
 
 ## 🏛️ Physical Hardware Architecture
@@ -127,29 +173,25 @@ For Software:
 **Sequential Authentication Pipeline**
 | Stage | Expected Input | Validation Mechanics | Threshold / Criteria | Fail-Secure Action |
 | :--- | :--- | :--- | :--- | :--- |
-| **0: IDLE** | Operator triggers `start_authentication()` | Checks that vault is in clean standby state. | None | Rejects input if locked out. |
-| **1: RFID** | 13.56MHz Mifare Tag UID (Hex) | Evaluates UID against enrolled database profile (`E2806894`). | Exact String Match | Decrements retry count; unlocks user profile on match. |
-| **2: Fingerprint** | Optical Scan ID (1..127) | Evaluates biometric slot ID and template matching confidence. | Confidence $\ge 0.85$ | Decrements retry count; advances to Stage 3. |
-| **3: Face Scan** | Webcam / Stream Frame (H, W, 3) | Extracts 256D normalized vector; evaluates cosine similarity and Laplacian blur sharpness. | Cosine Sim $\ge 0.90$, Variance $\ge 15.0$ | Decrements retry count; rejects spoof / blur. |
-| **4: Password** | Alphanumeric Passphrase | Verifies plaintext input against enrolled Argon2id cryptographic hash. | Argon2 Verification | Decrements retry count; advances to Stage 5. |
-| **5: Voice** | Acoustic Waveform + Spoken Phrase | Computes 256D spectral voiceprint and verifies both speaker timbre and challenge text. | Cosine Sim $\ge 0.85$ & Exact Phrase Match | Disengages lock relay; sets state to `UNLOCKED`. |
-| **UNLOCKED** | Standby | Holds solenoid open for 10 seconds. | Auto-relock timer | Auto-engages solenoid lock and resets to `IDLE`. |
+| **0: IDLE** | Operator triggers `start_authentication()` or presents physical RFID card | Checks that vault is in clean standby state. | None | Rejects input if locked out. |
+| **1: RFID** | 13.56MHz Mifare Tag UID (Hex) | Evaluates UID against authorized allowlist & enrolled database profile (`39D74320`). Keyfobs rejected. | Exact String Match | Decrements retry count; advances to Stage 2 on match. |
+| **2: Face Scan** | Webcam Stream Frame (H, W, 3) | Extracts 256D normalized vector; evaluates cosine similarity and Laplacian blur sharpness anti-spoofing. | Cosine Sim $\ge 0.85$, Variance $\ge 15.0$ | Decrements retry count; rejects spoof / blur. |
+| **3: Keypad PIN** | 4x4 Matrix Keypad Input (Terminated by `#`) | Verifies entered PIN string against enrolled Argon2id cryptographic hash. | Argon2id Hash Match | Decrements retry count; advances to Stage 4. |
+| **4: Voice** | Acoustic Waveform + Spoken Phrase | Computes 256D spectral voiceprint and verifies both speaker timbre and challenge phrase (`OPEN SESAME OVERENGINEERED`). | Cosine Sim $\ge 0.80$ & Exact Phrase Match | Disengages lock servo; triggers getaway motors; sets state to `UNLOCKED`. |
+| **UNLOCKED** | Standby / Disengaged | Holds lock open for 10 seconds while getaway motors propel chassis. | Auto-relock timer (10s) | Auto-engages servo lock and resets to `IDLE`. |
 
 ## 🔌 ESP32 Pinout & Wiring Matrix
 
 | Peripheral Component | Pin Name | ESP32 GPIO | Electrical / Protocol Notes |
 | :--- | :--- | :--- | :--- |
-| **4x4 Matrix Keypad** | Row 1 / Row 2 / Row 3 / Row 4 | **GPIO 13, 12, 14, 27** | Driven as outputs sequentially |
+| **MFRC522 RFID Reader** | SDA(SS) / SCK / MOSI / MISO / RST | **GPIO 5, 18, 23, 19, 4** | SPI Bus ($3.3\text{V}$ Logic & Power) |
+| **4x4 Matrix Keypad** | Row 1 / Row 2 / Row 3 / Row 4 | **GPIO 13, 12, 14, 27** | Driven as sequential scan outputs |
 | | Col 1 / Col 2 / Col 3 / Col 4 | **GPIO 26, 25, 33, 32** | Read as inputs with internal pull-ups |
-| **Lock Servo** | PWM Signal | **GPIO 2** | `0°` = Locked, `90°` = Unlocked (50Hz PWM) |
-| **Status Green LED** | Granted Indicator | **GPIO 22** | Active-High with 220Ω current resistor |
-| **Status Red LED** | Denied / Alarm | **GPIO 15** | Active-High with 220Ω current resistor |
-| **Active Buzzer** | Audio Feedback | **GPIO 21** | PWM tone generator (1000Hz, 2000Hz, etc.) |
-| **MFRC522 RFID** | SDA(SS) / SCK / MOSI / MISO / RST | **GPIO 5, 18, 23, 19, 4** | SPI Bus ($3.3\text{V}$) |
-| **AS608 Fingerprint** | RX2 / TX2 | **GPIO 16, 17** | Hardware Serial 2 (57600 Baud) |
-| **4-Motor Driver (Left)** | IN1 / IN2 (Left Motors Forward / Rev) | **GPIO 16, 17** | Dual H-Bridge (L298N / TB6612FNG) |
-| **4-Motor Driver (Right)** | IN3 / IN4 (Right Motors Forward / Rev) | **GPIO 0, 1** | Dual H-Bridge (L298N / TB6612FNG) |
-| **Tamper Switch** | Interrupt | **GPIO 34** | Active-Low interrupt (triggers lockout) |
+| **Lock Servo Actuator** | PWM Signal | **GPIO 2** | `0°` = Locked, `90°` = Unlocked (50Hz PWM, 5V VCC) |
+| **Status Green LED** | Granted / Success | **GPIO 22** | Active-High with 220Ω current limiting resistor |
+| **Status Red LED** | Denied / Alarm | **GPIO 15** | Active-High with 220Ω current limiting resistor |
+| **Active Buzzer** | Audio Tone & Chirp | **GPIO 21** | PWM tone generator (1000Hz, 2000Hz, etc.) |
+| **4-Motor Getaway Driver**| IN1 / IN2 (Left/Right Motors) | **GPIO 16, 17** | Dual H-Bridge Motor Driver (L298N / TB6612FNG) |
 
 ---
 
@@ -177,7 +219,6 @@ cp .env.example .env
    - `Keypad` by Mark Stanley, Alexander Brevig
    - `ESP32Servo` by Kevin Harrington
    - `MFRC522` by GithubCommunity / miguelbalboa
-   - `Adafruit Fingerprint Sensor Library` by Adafruit
    - `ArduinoJson` by Benoit Blanchon (v7.x or v6.x)
 4. Select Board: **ESP32 Dev Module**.
 5. Select Port: (e.g. `COM3` on Windows or `/dev/ttyUSB0` on Linux).
@@ -215,25 +256,27 @@ For Hardware:
 | | MISO | **GPIO 19** | SPI Master In |
 | | RST | **GPIO 4** | Reset Pin |
 | | 3.3V / GND | 3.3V / GND | **Do not power with 5V** |
-| **Fingerprint Sensor (AS608/R503)** | TX | **GPIO 16 (RX2)** | HardwareSerial 2 |
-| | RX | **GPIO 17 (TX2)** | HardwareSerial 2 |
-| | VCC / GND | 5V / GND | Power Pins |
-| **I2C LCD (16x2 / 20x4)** | SDA | **GPIO 21** | I2C Data (0x27) |
-| **Solenoid Relay Module** | IN / SIG | **GPIO 26** | Active HIGH triggers lock release |
-| **Active Buzzer** | SIG | **GPIO 27** | Audible alarm & chirp alerts |
-| **RGB LED Beacon** | Red / Green / Blue | **GPIO 12, 13, 14** | Common Cathode / Anode |
-| **Chassis Tamper Switch** | Switch Pin | **GPIO 34** | Active LOW interrupt (`FALLING`) |
+| **4x4 Matrix Keypad** | Rows 1..4 | **GPIO 13, 12, 14, 27** | Matrix Scan Rows |
+| | Cols 1..4 | **GPIO 26, 25, 33, 32** | Matrix Scan Cols |
+| **Lock Servo Actuator** | Signal | **GPIO 2** | 50Hz PWM Servo Actuator (5V Power) |
+| **Getaway Motor Driver**| IN1 / IN2 | **GPIO 16, 17** | L298N Dual H-Bridge Motor Control |
+| **Status Green LED** | Anode | **GPIO 22** | Access Granted Indicator |
+| **Status Red LED** | Anode | **GPIO 15** | Access Denied / Alarm Indicator |
+| **Active Buzzer** | SIG | **GPIO 21** | Audio Feedback & Audible Alarm |
 
 # Build Photos
 ![Team](Add photo of your team here)
 
 ### Project Demo
 # Video
-[Add your demo video link here]
-*Explain what the video demonstrates*
+[![Vault-404 Demonstration Video](https://img.shields.io/badge/Google_Drive-Watch_Demo_Video-blue?logo=google-drive&logoColor=white&style=for-the-badge)](https://drive.google.com/file/d/1uo9b2-WptjG9pEOimBNHWVY_SLei_Is5/view?usp=drivesdk)
+
+*The video demonstrates the complete live physical gauntlet in action: sequential MFRC522 RFID scanning, OpenCV biometric face recognition, matrix keypad PIN input with Argon2id cryptographic verification, acoustic vocal passphrase verification, micro-servo lock actuation, and the 4-motor getaway chassis getaway sequence.*
 
 # Additional Demos
-[Add any extra demo materials/links]
+[![Vault-404 Project Drive Folder](https://img.shields.io/badge/Google_Drive-Additional_Media_%26_Clips-green?logo=google-drive&logoColor=white&style=for-the-badge)](https://drive.google.com/drive/folders/1B2D2R4llDLvXmm8CeFvRjq37XF2q1ZJ1)
+
+*Access the shared project folder containing supplementary demonstration footage, hardware chassis assembly clips, and live testing media.*
 
 ## Additional Project Details
 
@@ -292,9 +335,21 @@ vault-404/
 ```
 
 ## Team Contributions
-- [Name 1]: [Specific contributions]
-- [Name 2]: [Specific contributions]
-- [Name 3]: [Specific contributions]
+
+- **[Blessy Mol Charls](https://github.com/Blessymolcharls)** (Lead Software & Hardware Integration):
+  - **Core Architecture & FSM**: Designed and implemented the asynchronous `VaultAuthEngine` finite state machine, handling sequential stage transitions, retry counters, security lockouts, and auto-relock delays.
+  - **FastAPI Backend & WebSockets**: Built the asynchronous REST API and real-time WebSocket telemetry engine (`/ws/vault`) for instantaneous sensor streaming and bidirectional state sync.
+  - **Biometrics & DSP Subsystems**: Developed the OpenCV computer vision face verification pipeline with Laplacian blur anti-spoofing, and the acoustic signal processing module with spectral voiceprint feature extraction.
+  - **Security & Cryptographic Persistence**: Implemented Argon2id password verification, SQLite repository with SQLAlchemy 2.0 async sessions, and tamper-evident SHA-256 hash-chained forensic audit trail verification.
+  - **Hardware Interfacing & Firmware**: Developed the `ESP32SerialAdapter` high-speed UART JSON-RPC protocol, Arduino/ESP32 C++ firmware logic, MFRC522 RFID SPI driver, 4x4 matrix keypad scanning, micro-servo lock PWM actuation, and L298N motor driver control.
+  - **Testing & Diagnostics**: Authored the interactive live hardware diagnostic suite (`test_hardware_live.py`) and automated pytest verification suites.
+
+- **[V M Samerath Kumar](https://github.com/estatic-coder)** (Software, UI & Mechanical Assembly):
+  - **Android Companion App**: Built the native Android Kotlin companion application (`mobile/android/`) using Jetpack Compose, Retrofit REST client integration (`VaultApi.kt`), and local cryptographic utility helpers (`CryptoHelper.kt`).
+  - **Frontend UI & Styling**: Contributed to Cyberpunk Web Operator HUD styling, CSS theming (`dashboard.css`), dashboard template structure (`index.html`), and client state integration (`vault_client.js`).
+  - **Test Scripting & Automation**: Created automated test execution helpers, API schema validation scripts, and test suite maintenance harnesses.
+  - **Mechanical Fabrication & Assembly**: Assembled the physical vault enclosure, chassis framework, and structural mounting for lock servos and motor brackets.
+  - **Mobility Platform Integration**: Integrated the 4-wheel mobile getaway chassis, drivetrain assembly, battery power routing, and chassis wiring.
 
 ---
 Made with ❤️ at TinkerHub Useless Projects

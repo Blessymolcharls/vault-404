@@ -234,14 +234,25 @@ async def auth_rfid(
     payload: RfidInputRequest,
     engine: VaultAuthEngine = Depends(get_engine),
 ) -> GenericResponse:
-    """Submit an RFID UID payload during Stage 1."""
     if engine.state == VaultState.IDLE:
         await engine.start_authentication()
+
+    if engine.state in (
+        VaultState.AWAITING_FACE,
+        VaultState.AWAITING_KEYPAD_PIN,
+        VaultState.AWAITING_VOICE,
+        VaultState.UNLOCKED,
+    ):
+        return GenericResponse(
+            success=True,
+            message=f"RFID card accepted. Vault is in stage: {engine.state.value}",
+            data={"state": engine.state.value, "failed_attempts": engine.failed_attempts},
+        )
 
     matched = await engine.submit_rfid(payload.card_uid)
     return GenericResponse(
         success=matched,
-        message="RFID authenticated successfully." if matched else "RFID rejected or unauthorized.",
+        message="RFID authenticated successfully. Advancing to Stage 2 (Face)." if matched else "RFID rejected or unauthorized.",
         data={"state": engine.state.value, "failed_attempts": engine.failed_attempts},
     )
 

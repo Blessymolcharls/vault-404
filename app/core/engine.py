@@ -59,7 +59,7 @@ class EngineConfig(BaseModel):
     )
     # Default credential parameters (used when standalone / no database user loaded)
     valid_rfid_uids: Set[str] = Field(
-        default_factory=lambda: {"39D74320", "89E3F31F"},
+        default_factory=lambda: {"39D74320"},
         description="Authorized RFID tag UIDs",
     )
 
