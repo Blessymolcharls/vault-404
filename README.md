@@ -209,6 +209,22 @@ flowchart TD
 ```
 
 ### 3. ESP32 Hardware Wiring & Pin Interconnect Matrix
+
+#### Visual Component Wiring Diagram
+<p align="center">
+  <img src="docs/images/esp32_hardware_wiring_diagram.png" alt="Vault 404 - ESP32 Hardware Wiring Diagram" width="900" style="border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.15);" />
+  <br>
+  <em>Figure 3.1: Complete Physical Component Wiring Schematic (ESP32 DevKit, RC522 RFID, 4x4 Keypad, SG90 Servo, L298N Motor Driver, 4 DC Motors, Status LEDs & Active Buzzer)</em>
+</p>
+
+#### Circuit Schematic Overview
+<p align="center">
+  <img src="docs/images/esp32_wiring_schematic.png" alt="Vault 404 - ESP32 Wiring Schematic" width="900" style="border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.15);" />
+  <br>
+  <em>Figure 3.2: ESP32 Pin Assignment & Bus Interconnect Schematic</em>
+</p>
+
+#### Mermaid Pin Routing
 ```mermaid
 graph TD
     subgraph ESP32_Left["ESP32 Left Header"]
