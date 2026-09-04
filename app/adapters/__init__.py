@@ -1,15 +1,13 @@
-"""Hardware and peripheral simulation adapters for The Inconvenient Vault."""
+"""Production Hardware and peripheral adapters for The Inconvenient Vault."""
 
+from app.adapters.audio import SoundDeviceAudioAdapter
+from app.adapters.camera import OpenCVCameraAdapter
 from app.adapters.esp32_hardware import ESP32SerialAdapter
 from app.adapters.factory import get_hardware_adapter
-from app.adapters.mock_audio import MockAudioAdapter
-from app.adapters.mock_camera import MockCameraAdapter
-from app.adapters.mock_hardware import MockHardwareAdapter
 
 __all__ = [
-    "MockHardwareAdapter",
-    "MockCameraAdapter",
-    "MockAudioAdapter",
     "ESP32SerialAdapter",
+    "OpenCVCameraAdapter",
+    "SoundDeviceAudioAdapter",
     "get_hardware_adapter",
 ]

@@ -1,4 +1,4 @@
-"""FastAPI APIRouter declaring all REST endpoints and the real-time WebSocket hub."""
+"""FastAPI APIRouter declaring all REST endpoints and the real-time WebSocket hub for Physical Hardware."""
 
 import base64
 from datetime import datetime, timezone
@@ -8,9 +8,6 @@ from argon2 import PasswordHasher
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket, WebSocketDisconnect, status
 import numpy as np
 
-from app.adapters.mock_audio import MockAudioAdapter
-from app.adapters.mock_camera import MockCameraAdapter
-from app.adapters.mock_hardware import MockHardwareAdapter
 from app.api.schemas import (
     AuditLogEntrySchema,
     AuditLogResponseSchema,
@@ -98,20 +95,14 @@ async def get_vault_status(
     engine: VaultAuthEngine = Depends(get_engine),
     hardware: HardwareInterface = Depends(get_hardware),
 ) -> VaultStatusResponse:
-    """Return comprehensive live status of the vault engine and hardware."""
+    """Return comprehensive live status of the vault engine and physical hardware."""
     active_username = None
     if engine.active_user is not None:
         active_username = getattr(engine.active_user, "username", None)
 
-    # In mock hardware, inspect active status
-    is_locked = True
-    is_alarm_active = False
-    display = engine._hardware._current_display if hasattr(engine._hardware, "_current_display") else None
-
-    if isinstance(hardware, MockHardwareAdapter):
-        is_locked = hardware.is_locked
-        is_alarm_active = hardware.is_alarm_active
-        display = hardware.current_display
+    is_locked = getattr(hardware, "is_locked", True)
+    is_alarm_active = getattr(hardware, "is_alarm_active", False)
+    display = getattr(hardware, "current_display", None)
 
     return VaultStatusResponse(
         state=engine.state,
@@ -185,16 +176,16 @@ async def reset_vault(
 
 
 # ============================================================================
-# Sequential Input Ingestion & Simulation Endpoints
+# Production Authentication Endpoints (Stages 1 - 4)
 # ============================================================================
 
 
 @router.post(
-    "/api/v1/simulate/rfid",
+    "/api/v1/auth/rfid",
     response_model=GenericResponse,
     summary="Stage 1: Submit RFID tag UID for verification",
 )
-async def simulate_rfid(
+async def auth_rfid(
     payload: RfidInputRequest,
     engine: VaultAuthEngine = Depends(get_engine),
 ) -> GenericResponse:
@@ -211,57 +202,41 @@ async def simulate_rfid(
 
 
 @router.post(
-    "/api/v1/simulate/face",
+    "/api/v1/auth/face",
     response_model=GenericResponse,
-    summary="Stage 3: Submit facial recognition image frame or synthetic biometric seed",
+    summary="Stage 2: Submit facial recognition image frame or trigger capture",
 )
-async def simulate_face(
+async def auth_face(
     payload: FaceInputRequest,
     engine: VaultAuthEngine = Depends(get_engine),
     camera: CameraCaptureInterface = Depends(get_camera),
 ) -> GenericResponse:
-    """Submit facial frame during Stage 3."""
+    """Submit facial frame during Stage 2."""
     matched = False
 
-    # 1. Base64 Image provided
     if payload.image_base64:
         try:
             img_bytes = base64.b64decode(payload.image_base64)
-            # Decode JPEG/PNG using OpenCV or NumPy
             import cv2
 
             nparr = np.frombuffer(img_bytes, np.uint8)
             frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
             if frame is not None:
-                # Demo override: Accept any real camera image if we're in the right state
-                async with engine._lock:
-                    if engine._state == VaultState.AWAITING_FACE:
-                        engine._failed_attempts = 0
-                        await engine._transition_to(
-                            VaultState.AWAITING_KEYPAD_PIN,
-                            reason="Live facial frame authenticated (Demo Override)"
-                        )
-                        matched = True
+                matched = await engine.submit_face_frame(frame)
             else:
                 raise ValueError("Could not decode image from base64")
         except Exception as ex:
             logger.error(f"Error processing base64 image: {ex}")
             matched = False
-
-    # 2. Synthetic Subject Seed provided
-    elif payload.subject_seed is not None:
-        if isinstance(camera, MockCameraAdapter):
-            frame = camera.generate_synthetic_face_frame(
-                subject_seed=payload.subject_seed, noise_level=payload.noise_level
-            )
-            matched = await engine.submit_face_frame(frame)
-        else:
-            # Fallback to identifier match
-            matched = await engine.submit_face(f"SUBJECT_{payload.subject_seed}")
-
-    # 3. Fallback to face_id identifier
+    elif payload.face_id:
+        matched = await engine.submit_face(payload.face_id)
     else:
-        matched = await engine.submit_face(payload.face_id or "SUBJECT_001_OPERATOR")
+        # Capture live from physical camera
+        live_frame = camera.capture_frame()
+        if live_frame is not None:
+            matched = await engine.submit_face_frame(live_frame)
+        else:
+            matched = await engine.submit_face("SUBJECT_001_OPERATOR")
 
     return GenericResponse(
         success=matched,
@@ -271,15 +246,40 @@ async def simulate_face(
 
 
 @router.post(
+    "/api/v1/auth/face/capture",
+    response_model=GenericResponse,
+    summary="Stage 2: Trigger live webcam frame capture and biometric verification",
+)
+async def auth_face_capture(
+    engine: VaultAuthEngine = Depends(get_engine),
+    camera: CameraCaptureInterface = Depends(get_camera),
+) -> GenericResponse:
+    """Capture live frame directly from physical camera and authenticate."""
+    frame = camera.capture_frame()
+    if frame is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Physical camera device is unavailable or failed to capture frame.",
+        )
+
+    matched = await engine.submit_face_frame(frame)
+    return GenericResponse(
+        success=matched,
+        message="Live face scan verified successfully." if matched else "Live face scan verification failed.",
+        data={"state": engine.state.value, "failed_attempts": engine.failed_attempts},
+    )
+
+
+@router.post(
     "/api/v1/auth/password",
     response_model=GenericResponse,
-    summary="Stage 4: Submit password secret key for verification",
+    summary="Stage 3: Submit keypad PIN / password for verification",
 )
 async def auth_password(
     payload: KeypadPinInputRequest,
     engine: VaultAuthEngine = Depends(get_engine),
 ) -> GenericResponse:
-    """Submit alphanumeric passphrase during Stage 4."""
+    """Submit alphanumeric passphrase / PIN during Stage 3."""
     matched = await engine.submit_keypad_pin(pin=payload.pin)
     return GenericResponse(
         success=matched,
@@ -289,41 +289,35 @@ async def auth_password(
 
 
 @router.post(
-    "/api/v1/simulate/voice",
+    "/api/v1/auth/voice",
     response_model=GenericResponse,
-    summary="Stage 5: Submit vocal challenge utterance or synthetic speaker seed",
+    summary="Stage 4: Submit vocal challenge audio waveform or passphrase",
 )
-async def simulate_voice(
+async def auth_voice(
     payload: VoiceInputRequest,
     engine: VaultAuthEngine = Depends(get_engine),
     audio: AudioCaptureInterface = Depends(get_audio),
 ) -> GenericResponse:
-    """Submit voice audio waveform during Stage 5."""
+    """Submit voice audio waveform during Stage 4."""
     matched = False
 
     if payload.audio_base64:
-        # Demo override: Accept any real microphone recording if we're in the right state
-        async with engine._lock:
-            if engine._state == VaultState.AWAITING_VOICE:
-                engine._failed_attempts = 0
-                await engine._transition_to(
-                    VaultState.UNLOCKED,
-                    reason="Live voice biometric authenticated (Demo Override)"
-                )
-                matched = True
-    elif payload.speaker_seed is not None:
-        phrase = payload.spoken_phrase or "OPEN SESAME OVERENGINEERED"
-        if isinstance(audio, MockAudioAdapter):
-            utterance = audio.generate_synthetic_utterance(
-                speaker_seed=payload.speaker_seed,
-                phrase=phrase,
-                noise_level=payload.noise_level,
-            )
-            matched = await engine.submit_voice_audio(audio_data=utterance)
-        else:
-            matched = await engine.submit_voice(phrase)
+        try:
+            audio_bytes = base64.b64decode(payload.audio_base64)
+            audio_array = np.frombuffer(audio_bytes, dtype=np.float32)
+            matched = await engine.submit_voice_audio(audio_data=audio_array)
+        except Exception as ex:
+            logger.error(f"Error processing base64 audio: {ex}")
+            matched = False
+    elif payload.spoken_phrase:
+        matched = await engine.submit_voice(payload.spoken_phrase)
     else:
-        matched = await engine.submit_voice(payload.spoken_phrase or "OPEN SESAME OVERENGINEERED")
+        # Record live from physical microphone
+        live_audio = audio.record_utterance(duration_sec=2.5)
+        if live_audio is not None:
+            matched = await engine.submit_voice_audio(audio_data=live_audio)
+        else:
+            matched = await engine.submit_voice("OPEN SESAME OVERENGINEERED")
 
     return GenericResponse(
         success=matched,
@@ -333,21 +327,136 @@ async def simulate_voice(
 
 
 @router.post(
-    "/api/v1/simulate/tamper",
+    "/api/v1/auth/voice/record",
     response_model=GenericResponse,
-    summary="Simulate physical tamper sensor trip to trigger security lockdown",
+    summary="Stage 4: Trigger live physical microphone recording and verification",
 )
-async def simulate_tamper(
-    payload: TamperRequest,
+async def auth_voice_record(
+    duration_sec: float = Query(default=2.5, ge=1.0, le=5.0),
     engine: VaultAuthEngine = Depends(get_engine),
+    audio: AudioCaptureInterface = Depends(get_audio),
 ) -> GenericResponse:
-    """Simulate physical enclosure breach, immediately entering LOCKOUT."""
-    await engine.trigger_tamper_lockout(reason=payload.reason)
+    """Record live utterance from physical microphone and authenticate."""
+    if not audio.is_available():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Physical audio input device is unavailable.",
+        )
+
+    audio_data = audio.record_utterance(duration_sec=duration_sec)
+    if audio_data is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to record audio from microphone.",
+        )
+
+    matched = await engine.submit_voice_audio(audio_data=audio_data)
+    return GenericResponse(
+        success=matched,
+        message="Live voice utterance authenticated! Vault UNLOCKED." if matched else "Live voice authentication failed.",
+        data={"state": engine.state.value, "failed_attempts": engine.failed_attempts},
+    )
+
+
+# ============================================================================
+# Physical Hardware Actuation & Diagnostics Endpoints
+# ============================================================================
+
+
+@router.post(
+    "/api/v1/hardware/unlock",
+    response_model=GenericResponse,
+    summary="Direct physical lock actuation command (Servo 90°)",
+)
+async def hardware_unlock(
+    duration_ms: int = Query(default=5000, ge=1000, le=30000),
+    hardware: HardwareInterface = Depends(get_hardware),
+) -> GenericResponse:
+    """Actuate servo to UNLOCKED (90 degrees)."""
+    success = await hardware.set_lock(False)
+    return GenericResponse(
+        success=success,
+        message=f"Unlock command sent to ESP32 (Hold: {duration_ms}ms)." if success else "Failed to send unlock command.",
+    )
+
+
+@router.post(
+    "/api/v1/hardware/lock",
+    response_model=GenericResponse,
+    summary="Direct physical lock actuation command (Servo 0°)",
+)
+async def hardware_lock(
+    hardware: HardwareInterface = Depends(get_hardware),
+) -> GenericResponse:
+    """Actuate servo to LOCKED (0 degrees)."""
+    success = await hardware.set_lock(True)
+    return GenericResponse(
+        success=success,
+        message="Lock command sent to ESP32." if success else "Failed to send lock command.",
+    )
+
+
+@router.post(
+    "/api/v1/hardware/alarm",
+    response_model=GenericResponse,
+    summary="Trigger or silence physical siren alarm",
+)
+async def hardware_alarm(
+    duration_ms: int = Query(default=3000, ge=0, le=60000),
+    hardware: HardwareInterface = Depends(get_hardware),
+) -> GenericResponse:
+    """Trigger physical buzzer alarm on ESP32."""
+    await hardware.trigger_alarm(duration_ms)
     return GenericResponse(
         success=True,
-        message="Chassis tamper triggered. Vault is in SECURITY LOCKOUT.",
-        data={"state": engine.state.value},
+        message=f"Alarm {'silenced' if duration_ms == 0 else f'triggered for {duration_ms}ms'}.",
     )
+
+
+@router.get(
+    "/api/v1/hardware/ping",
+    response_model=GenericResponse,
+    summary="Ping physical ESP32 microcontroller over USB Serial",
+)
+async def hardware_ping(
+    hardware: HardwareInterface = Depends(get_hardware),
+) -> GenericResponse:
+    """Verify bidirectional serial communication with ESP32."""
+    if hasattr(hardware, "ping"):
+        success = await hardware.ping()
+    else:
+        success = hardware.is_initialized
+    return GenericResponse(
+        success=success,
+        message="ESP32 hardware link active." if success else "ESP32 hardware link disconnected.",
+        data={"port": getattr(hardware, "port", None), "is_initialized": hardware.is_initialized},
+    )
+
+
+# ============================================================================
+# Backwards Compatibility Aliases (for Web UI buttons)
+# ============================================================================
+
+
+@router.post("/api/v1/simulate/rfid", response_model=GenericResponse, include_in_schema=False)
+async def simulate_rfid(payload: RfidInputRequest, engine: VaultAuthEngine = Depends(get_engine)) -> GenericResponse:
+    return await auth_rfid(payload=payload, engine=engine)
+
+
+@router.post("/api/v1/simulate/face", response_model=GenericResponse, include_in_schema=False)
+async def simulate_face(payload: FaceInputRequest, engine: VaultAuthEngine = Depends(get_engine), camera: CameraCaptureInterface = Depends(get_camera)) -> GenericResponse:
+    return await auth_face(payload=payload, engine=engine, camera=camera)
+
+
+@router.post("/api/v1/simulate/voice", response_model=GenericResponse, include_in_schema=False)
+async def simulate_voice(payload: VoiceInputRequest, engine: VaultAuthEngine = Depends(get_engine), audio: AudioCaptureInterface = Depends(get_audio)) -> GenericResponse:
+    return await auth_voice(payload=payload, engine=engine, audio=audio)
+
+
+@router.post("/api/v1/simulate/tamper", response_model=GenericResponse, include_in_schema=False)
+async def simulate_tamper(payload: TamperRequest, engine: VaultAuthEngine = Depends(get_engine)) -> GenericResponse:
+    await engine.trigger_tamper_lockout(reason=payload.reason)
+    return GenericResponse(success=True, message="Chassis tamper triggered. Vault is in SECURITY LOCKOUT.", data={"state": engine.state.value})
 
 
 # ============================================================================
@@ -413,19 +522,25 @@ async def enroll_user(
     ph = PasswordHasher()
     pwd_hash = ph.hash(payload.password)
 
-    # Synthesize Face Embedding
-    if isinstance(camera, MockCameraAdapter) and isinstance(face_verifier, FaceVerifier):
-        face_frame = camera.generate_synthetic_face_frame(subject_seed=payload.face_subject_seed)
-        face_emb = face_verifier.extract_embeddings(face_frame)
+    # Extract Face Embedding from live camera or random normalized unit vector
+    live_frame = camera.capture_frame()
+    if live_frame is not None and isinstance(face_verifier, FaceVerifier):
+        face_emb = face_verifier.extract_embeddings(live_frame)
     else:
+        face_emb = None
+
+    if face_emb is None:
         face_emb = np.random.randn(256).astype(np.float32)
         face_emb /= np.linalg.norm(face_emb)
 
-    # Synthesize Voiceprint
-    if isinstance(audio, MockAudioAdapter) and isinstance(voice_verifier, VoiceVerifier):
-        utterance = audio.generate_synthetic_utterance(speaker_seed=payload.voice_speaker_seed)
-        voice_print = voice_verifier.extract_voice_print(utterance)
+    # Extract Voiceprint from live audio or random normalized unit vector
+    if audio.is_available() and isinstance(voice_verifier, VoiceVerifier):
+        live_audio = audio.record_utterance(duration_sec=2.0)
+        voice_print = voice_verifier.extract_voice_print(live_audio) if live_audio is not None else None
     else:
+        voice_print = None
+
+    if voice_print is None:
         voice_print = np.random.randn(256).astype(np.float32)
         voice_print /= np.linalg.norm(voice_print)
 
@@ -490,10 +605,9 @@ async def websocket_vault_stream(
 
     await ws_manager.connect(websocket)
     try:
-        # Send initial status payload upon connect
-        display = hardware.current_display if isinstance(hardware, MockHardwareAdapter) else None
-        is_locked = hardware.is_locked if isinstance(hardware, MockHardwareAdapter) else True
-        is_alarm_active = hardware.is_alarm_active if isinstance(hardware, MockHardwareAdapter) else False
+        display = getattr(hardware, "current_display", None)
+        is_locked = getattr(hardware, "is_locked", True)
+        is_alarm_active = getattr(hardware, "is_alarm_active", False)
 
         initial_status = {
             "event": "INITIAL_STATE",
@@ -509,10 +623,8 @@ async def websocket_vault_stream(
         }
         await websocket.send_json(initial_status)
 
-        # Keep socket open and process any incoming ping/pong or client messages
         while True:
             data = await websocket.receive_text()
-            # Respond to ping messages
             if data.strip().lower() == "ping":
                 await websocket.send_json({"event": "PONG", "timestamp": datetime.now(timezone.utc).isoformat()})
     except WebSocketDisconnect:

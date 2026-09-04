@@ -70,13 +70,11 @@ class HardwareInterface(ABC):
         ...
 
     async def enable_keypad(self, expected_pin_hash: str) -> bool:
-        ...
+        return True
 
     async def disable_keypad(self) -> bool:
+        return True
 
-        """Activate the physical tamper alarm / siren / strobe sequence.
-
-        Args:
-            duration_ms: Duration in milliseconds for the alarm trigger.
-        """
-        pass
+    async def set_password(self, password: str) -> bool:
+        """Set the active hardware password on the microcontroller."""
+        return True

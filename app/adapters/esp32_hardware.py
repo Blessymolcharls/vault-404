@@ -183,21 +183,35 @@ class ESP32SerialAdapter(HardwareInterface):
         }
         return await self._send_command(cmd)
 
-    async def set_lock(self, locked: bool) -> bool:
-        """Send SET_LOCK command to actuate physical solenoid relay."""
+    async def set_lock(self, locked: bool, duration_ms: int = 5000) -> bool:
+        """Send command to actuate physical servo lock."""
         self._is_locked = locked
-        cmd = {
-            "cmd": "SET_LOCK",
-            "state": "LOCKED" if locked else "UNLOCKED",
-        }
+        if locked:
+            cmd = {"cmd": "SET_LOCK", "command": "COMMAND_LOCK", "state": "LOCKED"}
+        else:
+            cmd = {
+                "cmd": "COMMAND_UNLOCK",
+                "command": "COMMAND_UNLOCK",
+                "state": "UNLOCKED",
+                "parameters": {"duration_ms": duration_ms},
+            }
         return await self._send_command(cmd)
 
+    async def ping(self) -> bool:
+        """Send PING command to verify ESP32 communication."""
+        return await self._send_command({"cmd": "PING", "command": "PING"})
+
     async def enable_keypad(self, expected_pin_hash: str) -> bool:
-        cmd = {"cmd": "ENABLE_KEYPAD", "expected_pin_hash": expected_pin_hash}
+        cmd = {"cmd": "ENABLE_KEYPAD", "command": "ENABLE_KEYPAD", "expected_pin_hash": expected_pin_hash}
         return await self._send_command(cmd)
 
     async def disable_keypad(self) -> bool:
-        cmd = {"cmd": "DISABLE_KEYPAD"}
+        cmd = {"cmd": "DISABLE_KEYPAD", "command": "DISABLE_KEYPAD"}
+        return await self._send_command(cmd)
+
+    async def set_password(self, password: str) -> bool:
+        """Send SET_PASSWORD command to update the physical hardware password."""
+        cmd = {"cmd": "SET_PASSWORD", "command": "SET_PASSWORD", "password": password}
         return await self._send_command(cmd)
 
     async def trigger_alarm(self, duration_ms: int) -> None:
@@ -205,7 +219,9 @@ class ESP32SerialAdapter(HardwareInterface):
         self._is_alarm_active = duration_ms > 0
         cmd = {
             "cmd": "TRIGGER_ALARM",
+            "command": "TRIGGER_ALARM",
             "duration_ms": duration_ms,
+            "parameters": {"duration_ms": duration_ms},
         }
         await self._send_command(cmd)
 
@@ -283,12 +299,23 @@ class ESP32SerialAdapter(HardwareInterface):
         # Map ESP32 wire event name to HardwareEventType enum
         event_type_map = {
             "RFID_SCANNED": HardwareEventType.RFID_SCANNED,
+            "FINGERPRINT_CAPTURED": HardwareEventType.FINGERPRINT_SCANNED,
+            "FINGERPRINT_SCANNED": HardwareEventType.FINGERPRINT_SCANNED,
             "KEYPAD_STATUS": HardwareEventType.KEYPAD_STATUS,
             "KEYPAD_PIN_RESULT": HardwareEventType.KEYPAD_PIN_RESULT,
-            "TAMPER_TRIGGERED": HardwareEventType.TAMPER_TRIGGERED,
+            "KEYPAD_PIN_SUBMITTED": HardwareEventType.KEYPAD_PIN_RESULT,
+            "KEYPAD_KEY_PRESSED": HardwareEventType.KEYPAD_STATUS,
+            "KEYPAD_CLEARED": HardwareEventType.KEYPAD_STATUS,
+            "LOCK_STATUS_REPORT": HardwareEventType.LOCK_STATUS_CHANGED,
             "LOCK_CONFIRMED": HardwareEventType.LOCK_STATUS_CHANGED,
+            "TAMPER_TRIGGERED": HardwareEventType.TAMPER_TRIGGERED,
+            "TAMPER_DETECTED": HardwareEventType.TAMPER_TRIGGERED,
             "HARDWARE_ERROR": HardwareEventType.HARDWARE_ERROR,
         }
+
+        if event_name in ("LOCK_STATUS_REPORT", "LOCK_CONFIRMED"):
+            if "locked" in payload:
+                self._is_locked = bool(payload["locked"])
 
         hw_type = event_type_map.get(event_name)
         if hw_type:
@@ -300,6 +327,8 @@ class ESP32SerialAdapter(HardwareInterface):
             asyncio.create_task(self._dispatch_event(event))
         elif event_name == "PONG":
             logger.debug(f"Received PONG from ESP32: {payload}")
+            if "locked" in payload:
+                self._is_locked = bool(payload["locked"])
         elif event_name == "HARDWARE_BOOT":
             logger.info(f"ESP32 reported boot status: {payload}")
 

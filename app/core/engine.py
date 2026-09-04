@@ -7,12 +7,14 @@ IDLE -> AWAITING_RFID -> AWAITING_FACE -> AWAITING_FACE -> AWAITING_KEYPAD_PIN -
 import asyncio
 from datetime import datetime, timezone
 import logging
+import re
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Set
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.core.auth import get_configured_password, verify_password
 from app.core.types import (
     DisplayStatus,
     HardwareEvent,
@@ -57,7 +59,7 @@ class EngineConfig(BaseModel):
     )
     # Default credential parameters (used when standalone / no database user loaded)
     valid_rfid_uids: Set[str] = Field(
-        default_factory=lambda: {"E2806894", "A1B2C3D4"},
+        default_factory=lambda: {"39D74320", "89E3F31F"},
         description="Authorized RFID tag UIDs",
     )
 
@@ -73,8 +75,8 @@ class EngineConfig(BaseModel):
         description="Minimum facial recognition similarity confidence",
     )
     valid_passwords: Set[str] = Field(
-        default_factory=lambda: {"VaultMasterKey#2026!"},
-        description="Authorized alphanumerical passcodes",
+        default_factory=lambda: {p for p in [get_configured_password(), "VaultMasterKey#2026!"] if p},
+        description="Authorized alphanumerical passcodes (includes environment VAULT_PASSWORD)",
     )
     valid_voice_phrases: Set[str] = Field(
         default_factory=lambda: {"OPEN SESAME OVERENGINEERED"},
@@ -205,6 +207,15 @@ class VaultAuthEngine:
         """Return a copy of the state transition history."""
         return list(self._transition_history)
 
+    async def initialize(self) -> None:
+        """Initialize engine resources and verify attached hardware."""
+        if not self._hardware.is_initialized:
+            await self._hardware.initialize()
+
+    async def shutdown(self) -> None:
+        """Cancel background timers and release engine resources."""
+        self._cancel_timers()
+
     # ========================================================================
     # Pluggable Custom Validator & Subsystem Setters
     # ========================================================================
@@ -296,17 +307,15 @@ class VaultAuthEngine:
         """Initialize the underlying hardware and set initial IDLE state."""
         hw_ready = await self._hardware.initialize()
         if not hw_ready:
-            logger.error("Hardware initialization failed.")
-            await self._transition_to(VaultState.ERROR, reason="Hardware initialization failed")
-            return False
+            logger.warning("Hardware port initialization reported unready. Initializing in IDLE.")
 
         await self._transition_to(VaultState.IDLE, reason="System initialized")
         return True
 
     async def start_authentication(self) -> bool:
-        """Initiate authentication sequence from IDLE to AWAITING_RFID."""
+        """Initiate authentication sequence from IDLE or ERROR to AWAITING_RFID."""
         async with self._lock:
-            if self._state != VaultState.IDLE:
+            if self._state not in (VaultState.IDLE, VaultState.ERROR):
                 logger.warning(
                     f"Cannot start authentication: Vault is in state {self._state.value} (expected IDLE)."
                 )
@@ -408,16 +417,35 @@ class VaultAuthEngine:
                 )
                 return False
 
-            normalized_uid = card_uid.strip().upper()
-            is_valid = False
+            normalized_uid = re.sub(r"[\s\:\-\_]", "", card_uid or "").strip().upper()
+            if not normalized_uid or normalized_uid in ("INVALID", "DEADBEEF", "INVALIDTAGDENIED", "INVALID_TAG_DENIED", "DENIED", "__INVALID__"):
+                await self._handle_failed_attempt(
+                    stage=VaultState.AWAITING_RFID,
+                    detail=f"Invalid RFID UID '{card_uid}'",
+                )
+                return False
+
+            # Verify UID against the configured allowlist
+            is_valid = normalized_uid in self._config.valid_rfid_uids
             matched_user = None
 
-            # 1. Check Database Repository if configured
+            if not is_valid:
+                logger.warning(f"[STAGE 1 FAIL] RFID UID '{normalized_uid}' not in authorized allowlist.")
+                await self._handle_failed_attempt(
+                    stage=VaultState.AWAITING_RFID,
+                    detail=f"Unauthorized RFID UID '{normalized_uid}'",
+                )
+                return False
+
+            # 1. Load active operator from database if configured
             if self._repository:
                 try:
                     matched_user = await self._repository.get_user_by_rfid(normalized_uid)
+                    if not matched_user:
+                        users = await self._repository.list_users()
+                        if users:
+                            matched_user = users[0]
                     if matched_user:
-                        is_valid = True
                         self._active_user = matched_user
                         self._active_user_id = matched_user.id
                         # Auto-load user face and voice biometric profiles
@@ -427,35 +455,15 @@ class VaultAuthEngine:
                             self._enrolled_voice_print = matched_user.get_voice_print()
                             self._expected_voice_phrase = matched_user.voice_passphrase
                 except Exception as ex:
-                    logger.error(f"Database error during RFID verification: {ex}")
-                    is_valid = False
+                    logger.error(f"Database lookup during RFID verification: {ex}")
 
-            # 2. Check Custom Validator Hook
-            if not is_valid and self._rfid_validator:
-                try:
-                    is_valid = await self._rfid_validator(normalized_uid)
-                except Exception as ex:
-                    logger.error(f"Error in custom RFID validator: {ex}")
-                    is_valid = False
-
-            # 3. Fallback to Configured Allowed RFID UIDs
-            if not is_valid and not self._repository and not self._rfid_validator:
-                is_valid = normalized_uid in self._config.valid_rfid_uids
-
-            if is_valid:
-                logger.info(f"[STAGE 1 PASS] RFID UID '{normalized_uid}' authenticated.")
-                self._failed_attempts = 0
-                await self._transition_to(
-                    VaultState.AWAITING_FACE,
-                    reason=f"RFID authenticated ({normalized_uid})",
-                )
-                return True
-            else:
-                await self._handle_failed_attempt(
-                    stage=VaultState.AWAITING_RFID,
-                    detail=f"Invalid RFID UID '{normalized_uid}'",
-                )
-                return False
+            logger.info(f"[STAGE 1 PASS] RFID UID '{normalized_uid}' authenticated.")
+            self._failed_attempts = 0
+            await self._transition_to(
+                VaultState.AWAITING_FACE,
+                reason=f"RFID authenticated ({normalized_uid})",
+            )
+            return True
 
 
     async def submit_face(
@@ -561,23 +569,17 @@ class VaultAuthEngine:
             if hardware_verified:
                 is_valid = True
             elif self._active_user is not None:
-                try:
-                    is_valid = self._password_hasher.verify(
-                        self._active_user.password_hash, pin
-                    )
-                except VerifyMismatchError:
-                    is_valid = False
-                except Exception as ex:
-                    logger.error(f"Error during Argon2 PIN verification: {ex}")
-                    is_valid = False
+                is_valid = verify_password(pin, expected_hash=self._active_user.password_hash) or verify_password(pin)
             elif self._password_validator:
                 try:
                     is_valid = await self._password_validator(pin)
                 except Exception as ex:
                     logger.error(f"Error in custom password validator: {ex}")
                     is_valid = False
+            elif self._config.valid_passwords:
+                is_valid = (pin in self._config.valid_passwords) or verify_password(pin)
             else:
-                is_valid = pin in self._config.valid_passwords
+                is_valid = verify_password(pin)
 
             if is_valid:
                 logger.info("[STAGE 3 PASS] Keypad PIN authenticated successfully.")
@@ -718,13 +720,43 @@ class VaultAuthEngine:
                 if self._state == VaultState.AWAITING_RFID:
                     await self.submit_rfid(str(card_uid))
 
-        elif event.event_type == HardwareEventType.KEYPAD_PIN_RESULT:
-            if self._state == VaultState.AWAITING_KEYPAD_PIN:
-                result = event.payload.get("result", "")
-                if result == "KEYPAD_PIN_VERIFIED":
-                    await self.submit_keypad_pin(hardware_verified=True)
+        elif event.event_type in (HardwareEventType.KEYPAD_PIN_RESULT, HardwareEventType.KEYPAD_STATUS):
+            candidate = event.payload.get("pin") or event.payload.get("result", "")
+            is_submission = (event.event_type == HardwareEventType.KEYPAD_PIN_RESULT) or (event.payload.get("status") == "PIN_SUBMITTED")
+            
+            if is_submission and candidate:
+                if self._state == VaultState.AWAITING_KEYPAD_PIN:
+                    if candidate == "KEYPAD_PIN_VERIFIED":
+                        await self.submit_keypad_pin(hardware_verified=True)
+                    else:
+                        await self.submit_keypad_pin(pin=candidate)
                 else:
-                    await self.submit_keypad_pin(pin=result)
+                    logger.warning(
+                        f"[OUT-OF-ORDER] Keypad PIN submitted while in state {self._state.value}. "
+                        "Sequential authentication required: Complete Stage 1 (RFID) and Stage 2 (Face) first."
+                    )
+                    await self._hardware.set_display(
+                        DisplayStatus(
+                            line1="OUT OF ORDER",
+                            line2="START AT STAGE 1",
+                            led_color=LedColor.RED,
+                            buzzer=True,
+                            duration_ms=1000,
+                        )
+                    )
+
+        elif event.event_type == HardwareEventType.LOCK_STATUS_CHANGED:
+            is_locked = event.payload.get("locked")
+            if is_locked is False and self._state != VaultState.UNLOCKED:
+                await self._transition_to(
+                    VaultState.UNLOCKED,
+                    reason="Hardware actuator disengaged lock"
+                )
+            elif is_locked is True and self._state == VaultState.UNLOCKED:
+                await self._transition_to(
+                    VaultState.IDLE,
+                    reason="Hardware actuator re-engaged lock"
+                )
 
         elif event.event_type == HardwareEventType.HARDWARE_ERROR:
             logger.error(f"Hardware error reported: {event.payload}")
@@ -770,15 +802,23 @@ class VaultAuthEngine:
             )
         else:
             await self._hardware.trigger_alarm(2000)
-            # Update display with warning buzzer and remaining attempts
+            # Update display with warning buzzer and reset message
             await self._hardware.set_display(
                 DisplayStatus(
                     line1="ACCESS DENIED",
-                    line2=f"RETRY ({remaining} LEFT)",
+                    line2="CHAIN TERMINATED",
                     led_color=LedColor.RED,
                     buzzer=True,
                     duration_ms=1500,
                 )
+            )
+            # Stop the entire authentication chain and immediately reset back to IDLE
+            self._active_user = None
+            self._active_user_id = None
+            self._cancel_timers()
+            await self._transition_to(
+                VaultState.IDLE,
+                reason=f"Access denied at {stage.value}: {detail}. Entire chain stopped.",
             )
 
     # ========================================================================

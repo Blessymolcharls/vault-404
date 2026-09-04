@@ -1,7 +1,7 @@
 """FastAPI Application Entry Point for The Inconvenient Vault.
 
 Provides REST control endpoints, WebSocket telemetry streaming, CORS,
-static asset serving for the web dashboard, and lifespan dependency injection.
+static asset serving for the web dashboard, and production hardware dependency injection.
 """
 
 from contextlib import asynccontextmanager
@@ -13,11 +13,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+import numpy as np
 
+from app.adapters.audio import SoundDeviceAudioAdapter
+from app.adapters.camera import OpenCVCameraAdapter
+from app.adapters.esp32_hardware import ESP32SerialAdapter
 from app.adapters.factory import get_hardware_adapter
-from app.adapters.mock_audio import MockAudioAdapter
-from app.adapters.mock_camera import MockCameraAdapter
-from app.adapters.mock_hardware import MockHardwareAdapter
 from app.api.routes import router
 from app.api.websocket_manager import WebSocketManager
 from app.audio.voice_verifier import VoiceVerifier
@@ -40,8 +41,8 @@ logger = logging.getLogger("vault.main")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Lifespan context manager initializing database, hardware, and engine services."""
-    logger.info("Initializing The Inconvenient Vault Backend Services...")
+    """Lifespan context manager initializing database, physical hardware, and engine services."""
+    logger.info("Initializing The Inconvenient Vault Backend Services (Physical Hardware Mode)...")
 
     # 1. Database & Persistence Layer
     db_engine = create_database_engine(
@@ -51,12 +52,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     session_factory = create_session_factory(db_engine)
     repository = SqliteVaultRepository(session_factory=session_factory)
 
-    # 2. Hardware & Virtual Biometric Peripherals
+    # 2. Production Hardware Peripherals
     hardware = getattr(app.state, "hardware", None) or get_hardware_adapter()
-    camera = MockCameraAdapter()
-    audio = MockAudioAdapter()
-    face_verifier = FaceVerifier(default_threshold=0.90)
-    voice_verifier = VoiceVerifier(default_threshold=0.85)
+    camera = getattr(app.state, "camera", None) or OpenCVCameraAdapter()
+    audio = getattr(app.state, "audio", None) or SoundDeviceAudioAdapter()
+    face_verifier = FaceVerifier(default_threshold=0.85)
+    voice_verifier = VoiceVerifier(default_threshold=0.80)
 
     # 3. Real-Time WebSocket Hub
     ws_manager = WebSocketManager()
@@ -65,52 +66,58 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     engine = VaultAuthEngine(hardware=hardware, repository=repository)
     await engine.initialize()
 
-    # Default synthetic enrolled biometrics for Subject 777 / Speaker 1
-    enrolled_face = face_verifier.extract_embeddings(
-        camera.generate_synthetic_face_frame(subject_seed=777)
-    )
-    enrolled_voice = voice_verifier.extract_voice_print(
-        audio.generate_synthetic_utterance(speaker_seed=1)
-    )
-    if enrolled_face is not None:
-        engine.set_face_verifier(verifier=face_verifier, enrolled_embedding=enrolled_face, threshold=0.90)
-    if enrolled_voice is not None:
-        engine.set_voice_verifier(
-            verifier=voice_verifier,
-            enrolled_voice_print=enrolled_voice,
-            expected_phrase="OPEN SESAME OVERENGINEERED",
-            threshold=0.85,
-        )
+    # 5. Default Enrolled Biometric Vectors
+    default_face_emb = np.ones(256, dtype=np.float32)
+    default_face_emb /= np.linalg.norm(default_face_emb)
 
-    # 5. Wire FSM State Change Broadcaster to WebSocket Hub
+    default_voice_print = np.ones(256, dtype=np.float32)
+    default_voice_print /= np.linalg.norm(default_voice_print)
+
+    engine.set_face_verifier(verifier=face_verifier, enrolled_embedding=default_face_emb, threshold=0.85)
+    engine.set_voice_verifier(
+        verifier=voice_verifier,
+        enrolled_voice_print=default_voice_print,
+        expected_phrase="OPEN SESAME OVERENGINEERED",
+        threshold=0.80,
+    )
+
+    # 6. Wire FSM State Change Broadcaster to WebSocket Hub
     async def on_state_transition(event: StateTransitionEvent) -> None:
         await ws_manager.broadcast_event("STATE_CHANGE", event.model_dump())
 
     engine.register_state_listener(on_state_transition)
 
-    # 6. Wire Hardware Event Broadcaster to WebSocket Hub
+    # 7. Wire Hardware Event Broadcaster to WebSocket Hub
     async def on_hardware_event(hw_event: HardwareEvent) -> None:
         await ws_manager.broadcast_event("HARDWARE_EVENT", hw_event.model_dump())
 
     hardware.register_event_listener(on_hardware_event)
 
-    # 7. Seed Default Operator Record if not present
+    # 8. Seed or Synchronize Default Operator Record
     try:
-        existing_user = await repository.get_user_by_rfid("E2806894")
-        if not existing_user and enrolled_face is not None and enrolled_voice is not None:
-            ph = PasswordHasher()
-            pwd_hash = ph.hash("VaultMasterKey#2026!")
+        from app.core.auth import get_configured_password_hash, get_configured_password
+        ph = PasswordHasher()
+        configured_hash = get_configured_password_hash() or ph.hash(get_configured_password() or "1234")
+        users = await repository.list_users()
+        existing_user = users[0] if users else None
+
+        if not existing_user:
             await repository.create_user(
                 username="OPERATOR_001",
-                rfid_uid="E2806894",
-                password_hash=pwd_hash,
-                face_embedding=enrolled_face,
-                voice_print=enrolled_voice,
+                rfid_uid="39D74320",
+                password_hash=configured_hash,
+                face_embedding=default_face_emb,
+                voice_print=default_voice_print,
                 voice_passphrase="OPEN SESAME OVERENGINEERED",
             )
-            logger.info("Default operator 'OPERATOR_001' seeded into database.")
+            logger.info("Default operator 'OPERATOR_001' seeded into database with RFID 39D74320.")
+        else:
+            # Sync password hash and RFID UID with active operator
+            await repository.update_user_password(existing_user.id, configured_hash)
+            await repository.update_user_rfid(existing_user.id, "39D74320")
+            logger.info(f"Synchronized credentials for operator '{existing_user.username}' (RFID: 39D74320).")
     except Exception as ex:
-        logger.warning(f"Operator seeding skipped or failed: {ex}")
+        logger.warning(f"Operator seeding/sync skipped or failed: {ex}")
 
     # Store singletons on app state for dependency injection
     app.state.db_engine = db_engine
@@ -139,8 +146,8 @@ def create_app() -> FastAPI:
     """FastAPI Application Factory."""
     app = FastAPI(
         title="The Inconvenient Vault API",
-        description="REST & WebSocket API for the 5-Stage Over-Engineered Sequential Authentication System.",
-        version="1.0.0",
+        description="REST & WebSocket API for the 5-Stage Over-Engineered Sequential Authentication System (Physical Hardware Mode).",
+        version="2.0.0",
         lifespan=lifespan,
     )
 

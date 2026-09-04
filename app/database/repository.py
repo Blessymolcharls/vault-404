@@ -104,6 +104,31 @@ class SqliteVaultRepository(VaultRepositoryInterface):
             result = await session.execute(stmt)
             return result.scalar_one_or_none()
 
+    async def update_user_password(self, user_id: int, password_hash: str) -> bool:
+        """Update password hash for an existing user."""
+        async with self._session_factory() as session:
+            stmt = select(User).where(User.id == user_id)
+            user = (await session.execute(stmt)).scalar_one_or_none()
+            if user:
+                user.password_hash = password_hash
+                await session.commit()
+                logger.info(f"Updated password hash for user #{user_id} ({user.username}).")
+                return True
+            return False
+
+    async def update_user_rfid(self, user_id: int, rfid_uid: str) -> bool:
+        """Update RFID tag UID for an existing user."""
+        normalized_uid = rfid_uid.strip().upper()
+        async with self._session_factory() as session:
+            stmt = select(User).where(User.id == user_id)
+            user = (await session.execute(stmt)).scalar_one_or_none()
+            if user:
+                user.rfid_uid = normalized_uid
+                await session.commit()
+                logger.info(f"Updated RFID UID for user #{user_id} ({user.username}) to '{normalized_uid}'.")
+                return True
+            return False
+
     async def list_users(self) -> List[User]:
         """Retrieve all users."""
         async with self._session_factory() as session:

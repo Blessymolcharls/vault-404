@@ -25,6 +25,9 @@ class HardwareEventType(str, Enum):
     # RFID Events
     RFID_SCANNED = "RFID_SCANNED"
 
+    # Fingerprint Events
+    FINGERPRINT_SCANNED = "FINGERPRINT_SCANNED"
+
     # Keypad Events
     KEYPAD_STATUS = "KEYPAD_STATUS"
     KEYPAD_PIN_RESULT = "KEYPAD_PIN_RESULT"

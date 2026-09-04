@@ -7,7 +7,7 @@
   <meta name="description" content="4-stage multi-modal authenticated vault access system.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/css/dashboard.css">
+  <link rel="stylesheet" href="/static/css/dashboard.css?v=10">
 </head>
 <body>
 
@@ -161,12 +161,17 @@
               <span class="sc-name">RFID / NFC SCANNER</span>
               <span class="sc-badge">STAGE 1</span>
             </div>
-            <input id="rfidIn" class="finput" type="text" value="E2806894" placeholder="Tag UID">
+            <div id="rfidLiveBadge" class="live-hw-badge">
+              <span>HARDWARE SCAN:</span>
+              <span id="rfidLiveVal" class="live-val">AWAITING TAG...</span>
+            </div>
+            <div class="input-wrap">
+              <input id="rfidIn" class="finput" type="hidden" value="" placeholder="">
+            </div>
             <div class="btn-row">
               <button id="btnRfidAuth"  class="btn green sm">✓ AUTH TAG</button>
               <button id="btnRfidBad"   class="btn red sm">✗ INVALID</button>
             </div>
-            <button id="btnRfidCustom" class="btn ghost sm">SUBMIT CUSTOM UID</button>
           </div>
 
           <!-- FACE -->
@@ -199,12 +204,18 @@
               <span class="sc-name">SECRET PASSWORD KEYPAD</span>
               <span class="sc-badge">STAGE 3</span>
             </div>
-            <input id="pinIn" class="finput" type="password" value="VaultMasterKey#2026!" placeholder="Enter Secret Passphrase">
-            <div class="btn-row">
-              <button id="btnPinAuth" class="btn green sm">✓ INJECT VALID</button>
-              <button id="btnPinBad"  class="btn red sm">✗ INJECT BAD</button>
+            <div id="pinLiveBadge" class="live-hw-badge">
+              <span>KEYPAD LIVE BUFFER:</span>
+              <span id="pinLiveVal" class="live-val">EMPTY</span>
             </div>
-            <button id="btnPinSubmit" class="btn ghost sm">SUBMIT ENTERED KEY</button>
+            <div class="input-wrap">
+              <input id="pinIn" class="finput" type="text" value="" placeholder="Enter Password or Type on Keypad">
+              <button id="togglePinMask" class="toggle-eye-btn" type="button" title="Toggle Plaintext / Masked">👁 HIDE</button>
+            </div>
+            <div class="btn-row">
+              <button id="btnPinAuth" class="btn green sm">✓ SUBMIT PASSWORD</button>
+              <button id="btnPinBad"  class="btn red sm">✗ WRONG PASSWORD</button>
+            </div>
           </div>
 
           <!-- VOICE -->
@@ -258,6 +269,6 @@
   <!-- TOAST container -->
   <div id="toasts"></div>
 
-  <script src="/static/js/vault_client.js"></script>
+  <script src="/static/js/vault_client.js?v=10"></script>
 </body>
 </html>

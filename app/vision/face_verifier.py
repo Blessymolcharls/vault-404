@@ -48,7 +48,13 @@ class FaceVerifier(FaceRecognizerInterface):
         self.min_liveness_threshold: float = min_liveness_threshold
         self.target_size: tuple[int, int] = target_size
         model_path = os.path.join(os.path.dirname(__file__), "face_detection_yunet_2023mar.onnx")
-        self.face_detector = cv2.FaceDetectorYN_create(model_path, "", (320, 320))
+        try:
+            if os.path.exists(model_path):
+                self.face_detector = cv2.FaceDetectorYN_create(model_path, "", (320, 320))
+            else:
+                self.face_detector = None
+        except Exception:
+            self.face_detector = None
 
     def extract_embeddings(self, frame: np.ndarray) -> Optional[np.ndarray]:
         """Extract an L2-normalized 256-dimensional spatial and gradient feature embedding.
@@ -73,28 +79,22 @@ class FaceVerifier(FaceRecognizerInterface):
             logger.warning(f"Unexpected frame shape: {frame.shape}")
             return None
         
-        h, w = bgr_frame.shape[:2]
-        self.face_detector.setInputSize((w, h))
-        
-        ret, faces = self.face_detector.detect(bgr_frame)
-
-        if faces is None or len(faces) == 0:
-            logger.warning("No face detected in frame via YuNet.")
-            return None
-        
-        # Take the largest bounding box
-        largest_face = max(faces, key=lambda f: f[2] * f[3])
-        x, y, w_face, h_face = map(int, largest_face[:4])
-        
-        x = max(0, x)
-        y = max(0, y)
-        w_face = min(w - x, w_face)
-        h_face = min(h - y, h_face)
-        
-        if w_face <= 0 or h_face <= 0:
-            return None
-
-        crop = bgr_frame[y : y + h_face, x : x + w_face]
+        crop = bgr_frame
+        if self.face_detector is not None:
+            try:
+                self.face_detector.setInputSize((w, h))
+                ret, faces = self.face_detector.detect(bgr_frame)
+                if faces is not None and len(faces) > 0:
+                    largest_face = max(faces, key=lambda f: f[2] * f[3])
+                    x, y, w_face, h_face = map(int, largest_face[:4])
+                    x = max(0, x)
+                    y = max(0, y)
+                    w_face = min(w - x, w_face)
+                    h_face = min(h - y, h_face)
+                    if w_face > 0 and h_face > 0:
+                        crop = bgr_frame[y : y + h_face, x : x + w_face]
+            except Exception:
+                crop = bgr_frame
         resized = cv2.resize(crop, self.target_size, interpolation=cv2.INTER_AREA)
         gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
 

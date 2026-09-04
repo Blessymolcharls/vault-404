@@ -94,10 +94,12 @@ function startClock() {
 
 class VaultClient {
   constructor() {
-    this.ws          = null;
-    this.retries     = 0;
-    this.mediaStream = null;
-    this._busy       = {};   // per-action busy guard
+    this.ws           = null;
+    this.retries      = 0;
+    this.mediaStream  = null;
+    this._busy        = {};          // per-action busy guard
+    this._currentState = 'IDLE';    // last known FSM state (updated on every HUD render)
+    this._rfidLockout  = false;     // debounce: ignore duplicate RFID scans for 4s after first
 
     this._el = id => document.getElementById(id);
     this._bind();
@@ -116,18 +118,65 @@ class VaultClient {
     on('btnAdmin',     () => { const k = prompt('Admin override key:', 'ADMIN_RESET_9999'); if (k) this._post('/api/v1/vault/reset', { admin_override_key: k }).then(r => { this._toast(r.message, r.success?'s':'e'); this._fetchAll(); }); });
     on('btnRefresh',   () => this._fetchLogs());
 
-    on('btnRfidAuth',    () => this._rfid('E2806894'));
-    on('btnRfidBad',     () => this._rfid('DEADBEEF'));
-    on('btnRfidCustom',  () => this._rfid(this._el('rfidIn').value));
+    on('btnRfidAuth',    () => {
+      const badgeVal = this._el('rfidLiveVal')?.textContent?.trim() || '';
+      const inputVal = this._el('rfidIn')?.value?.trim() || '';
+      // The hidden input always holds the real UID from hardware scan
+      const uid = inputVal || '';
+      if (!uid || uid === 'AWAITING TAG...') {
+        this._toast('Scan an RFID tag first — hardware scan auto-populates', 'w');
+        return;
+      }
+      this._post('/api/v1/simulate/rfid', { card_uid: uid }).then(r => {
+        if (!r.success) this._showFailAnimation();
+        this._toast(r.message, r.success ? 's' : 'e');
+        this._fetchAll();
+      });
+    });
+    on('btnRfidBad',     () => {
+      this._post('/api/v1/simulate/rfid', { card_uid: 'INVALID_TAG_DENIED' }).then(r => {
+        this._showFailAnimation();
+        this._toast(r.message, 'e');
+        this._fetchAll();
+      });
+    });
+    on('btnRfidCustom',  () => {
+      const inputVal = this._el('rfidIn')?.value?.trim() || '';
+      if (!inputVal) {
+        this._toast('Please enter a custom UID to submit', 'w');
+        return;
+      }
+      this._rfid(inputVal);
+    });
 
     on('btnCamStart',  () => this._camStart());
     on('btnCamCap',    () => this._camCapture());
     on('btnFaceAuth',  () => this._face(777));
     on('btnFaceBad',   () => this._face(999));
 
-    on('btnPinAuth',   () => { this._el('pinIn').value = 'VaultMasterKey#2026!'; this._pin('VaultMasterKey#2026!'); });
-    on('btnPinBad',    () => { this._el('pinIn').value = 'WrongPassword!';       this._pin('WrongPassword!'); });
+    on('btnPinAuth',   () => {
+      const val = this._el('pinIn').value;
+      if (!val) {
+        this._toast('Please enter your configured password in the input box', 'w');
+        return;
+      }
+      this._pin(val);
+    });
+    on('btnPinBad',    () => { this._pin('__INVALID_TEST_PASSWORD__'); });
     on('btnPinSubmit', () => this._pin(this._el('pinIn').value));
+    on('togglePinMask', () => {
+      const pinEl = this._el('pinIn');
+      const btn = this._el('togglePinMask');
+      if (pinEl && btn) {
+        if (pinEl.type === 'password') {
+          pinEl.type = 'text';
+          btn.textContent = '👁 HIDE';
+        } else {
+          pinEl.type = 'password';
+          btn.textContent = '👁 SHOW';
+        }
+      }
+    });
 
     on('btnMic',       () => this._micRecord());
     on('btnVoiceAuth', () => this._voice(1));
@@ -135,10 +184,67 @@ class VaultClient {
   }
 
   /* ── auth actions ── */
-  _rfid(uid)  { if (!uid) return; this._post('/api/v1/simulate/rfid', { card_uid: uid }).then(r => { this._toast(r.message, r.success?'s':'e'); this._fetchAll(); }); }
-  _face(seed) { this._post('/api/v1/simulate/face', { subject_seed: seed, noise_level: 0.01 }).then(r => { this._toast(r.message, r.success?'s':'e'); this._fetchAll(); }); }
-  _pin(val)   { if (!val) return; this._post('/api/v1/auth/password', { pin: val }).then(r => { this._toast(r.message, r.success?'s':'e'); this._fetchAll(); }); }
-  _voice(seed){ this._post('/api/v1/simulate/voice', { speaker_seed: seed, spoken_phrase: this._el('phraseIn').value || 'OPEN SESAME OVERENGINEERED', noise_level: 0.01 }).then(r => { this._toast(r.message, r.success?'s':'e'); this._fetchAll(); }); }
+  _rfid(uid, autoSubmit = false)  {
+    if (!uid) return;
+    const cleanUid = uid.replace(/[\s\:\-\_]/g, '').toUpperCase();
+    // Store actual UID in hidden input
+    const rfidIn = this._el('rfidIn');
+    if (rfidIn) rfidIn.value = cleanUid || uid;
+    // Show masked badge — never reveal raw UID on screen
+    const rfidBadge = this._el('rfidLiveVal');
+    const rfidCard  = this._el('rfidLiveBadge');
+    const masked    = '●●●● ●●●● DETECTED';
+    if (rfidBadge) rfidBadge.textContent = masked;
+    if (rfidCard) {
+      rfidCard.classList.remove('pulse-highlight');
+      void rfidCard.offsetWidth;
+      rfidCard.classList.add('pulse-highlight');
+    }
+    // Hardware scan: only auto-submit if the FSM is expecting RFID and no recent duplicate
+    if (autoSubmit) {
+      const stateOk = this._currentState === 'IDLE' || this._currentState === 'AWAITING_RFID';
+      if (!stateOk || this._rfidLockout) return; // drop duplicate / out-of-order scan silently
+      // Set debounce lock for 4 seconds to absorb repeated MFRC522 reads of same card
+      this._rfidLockout = true;
+      setTimeout(() => { this._rfidLockout = false; }, 4000);
+
+      this._post('/api/v1/simulate/rfid', { card_uid: cleanUid || uid }).then(r => {
+        // Only show fail animation when genuinely denied (state stayed AWAITING_RFID)
+        const responseState = r?.data?.state;
+        const genuineDenial = !r.success && (responseState === 'AWAITING_RFID' || responseState === 'IDLE');
+        if (genuineDenial) {
+          this._rfidLockout = false; // allow retry after denial
+          this._showFailAnimation();
+        }
+        this._toast(r.message, r.success ? 's' : 'e');
+        this._fetchAll();
+      });
+    }
+  }
+  _face(seed) {
+    this._post('/api/v1/simulate/face', { subject_seed: seed, noise_level: 0.01 }).then(r => {
+      if (!r.success) this._showFailAnimation();
+      this._toast(r.message, r.success?'s':'e');
+      this._fetchAll();
+    });
+  }
+  _pin(val)   {
+    if (!val) return;
+    const cleanVal = String(val).trim();
+    if (!cleanVal) return;
+    this._post('/api/v1/auth/password', { pin: cleanVal }).then(r => {
+      if (!r.success) this._showFailAnimation();
+      this._toast(r.message, r.success ? 's' : 'e');
+      this._fetchAll();
+    });
+  }
+  _voice(seed){
+    this._post('/api/v1/simulate/voice', { speaker_seed: seed, spoken_phrase: this._el('phraseIn')?.value || 'OPEN SESAME OVERENGINEERED', noise_level: 0.01 }).then(r => {
+      if (!r.success) this._showFailAnimation();
+      this._toast(r.message, r.success?'s':'e');
+      this._fetchAll();
+    });
+  }
 
   /* ── camera ── */
   async _camStart() {
@@ -162,6 +268,7 @@ class VaultClient {
       cv.getContext('2d').drawImage(this._el('camVid'), 0, 0, 320, 240);
       const b64 = cv.toDataURL('image/jpeg', 0.82).split(',')[1];
       const r = await this._post('/api/v1/simulate/face', { image_base64: b64 });
+      if (!r.success) this._showFailAnimation();
       this._toast(r.message, r.success ? 's' : 'e');
       this._fetchAll();
     } finally {
@@ -191,6 +298,7 @@ class VaultClient {
             spoken_phrase: this._el('phraseIn')?.value || 'OPEN SESAME OVERENGINEERED',
             noise_level:   0.01
           });
+          if (!r.success) this._showFailAnimation();
           this._toastReplace(r.message, r.success ? 's' : 'e', 'mic-status');
           this._fetchAll();
           setTimeout(() => { this._busy.voice = false; }, 1500);
@@ -201,6 +309,45 @@ class VaultClient {
     } catch(e) {
       this._toast('Mic unavailable — use mock voice', 'w');
       this._busy.voice = false;
+    }
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     AUTO-MOCK HELPERS
+     Stage 2 — CV (face biometrics): uses operator face_id
+     Stage 4 — Acoustic (voice):     uses operator passphrase
+     ══════════════════════════════════════════════════════════════ */
+  async _autoMockFace() {
+    if (this._currentState !== 'AWAITING_FACE') return; // guard: state may have changed
+    if (this._busy.autoFace) return;
+    this._busy.autoFace = true;
+    try {
+      const r = await this._post('/api/v1/simulate/face', {
+        face_id: 'SUBJECT_001_OPERATOR',  // known-good operator identity
+        noise_level: 0.0
+      });
+      if (!r.success) this._showFailAnimation();
+      this._toast(r.success ? '[ CV ] Face matched ✓' : '[ CV ] Face rejected ✗', r.success ? 's' : 'e');
+      this._fetchAll();
+    } finally {
+      setTimeout(() => { this._busy.autoFace = false; }, 3000);
+    }
+  }
+
+  async _autoMockVoice() {
+    if (this._currentState !== 'AWAITING_VOICE') return; // guard
+    if (this._busy.autoVoice) return;
+    this._busy.autoVoice = true;
+    try {
+      const r = await this._post('/api/v1/simulate/voice', {
+        spoken_phrase: 'OPEN SESAME OVERENGINEERED',  // enrolled passphrase
+        noise_level: 0.0
+      });
+      if (!r.success) this._showFailAnimation();
+      this._toast(r.success ? '[ ACOUSTIC ] Voice verified ✓' : '[ ACOUSTIC ] Voice rejected ✗', r.success ? 's' : 'e');
+      this._fetchAll();
+    } finally {
+      setTimeout(() => { this._busy.autoVoice = false; }, 3000);
     }
   }
 
@@ -220,13 +367,88 @@ class VaultClient {
     this.ws.onmessage = e => {
       try {
         const msg = JSON.parse(e.data);
-        /* ── KEY FIX: correct path is msg.data.current_state ── */
+        /* ── State transition handling ── */
         if (msg.event === 'STATE_CHANGE' || msg.event === 'INITIAL_STATE') {
-          if (msg.data?.current_state === 'UNLOCKED') {
+          const newState = msg.data?.current_state;
+          const reason   = (msg.data?.reason || '').toLowerCase();
+
+          if (newState === 'UNLOCKED') {
             this._showAuthAnimation();
+
+          } else if (newState === 'AWAITING_FACE') {
+            // ── Stage 2: auto mock CV / face biometrics ──
+            this._toast('[ STAGE 2 ] Running CV face match...', 'i');
+            setTimeout(() => this._autoMockFace(), 800);
+
+          } else if (newState === 'AWAITING_KEYPAD_PIN') {
+            // ── Stage 3: keypad — wait for hardware PIN entry ──
+            this._toast('[ STAGE 3 ] Enter PIN on keypad then press #', 'i');
+
+          } else if (newState === 'AWAITING_VOICE') {
+            // ── Stage 4: auto mock acoustic / voice ──
+            this._toast('[ STAGE 4 ] Running acoustic voice match...', 'i');
+            setTimeout(() => this._autoMockVoice(), 800);
+
+          } else if (newState === 'IDLE' && (reason.includes('denied') || reason.includes('chain stopped') || reason.includes('failed') || reason.includes('timeout'))) {
+            this._showFailAnimation();
           }
+
           this._fetchAll();
         } else if (msg.event === 'HARDWARE_EVENT') {
+          const hw = msg.data;
+          if (hw) {
+            const evType = hw.event_type;
+            const payload = hw.payload || {};
+
+            // 1. RFID Card Scan
+            // The engine listener on the backend ALREADY calls submit_rfid() directly from
+            // the hardware event. JS must NOT make a second HTTP call — just update the badge
+            // and wait for the STATE_CHANGE broadcast.
+            if (evType === 'RFID_SCANNED' || payload.card_uid) {
+              const uid = payload.card_uid || payload.uid;
+              if (uid) {
+                // Update badge (masked) only — NO auto-submit
+                this._rfid(uid, false);
+                this._toast('[ RFID ] Tag detected — verifying...', 'i');
+              }
+            }
+
+            // 2. Keypad Key Pressed / Cleared
+            if (evType === 'KEYPAD_STATUS') {
+              const pIn = this._el('pinIn');
+              const pBadge = this._el('pinLiveVal');
+              if (payload.status === 'CLEARED') {
+                if (pIn) pIn.value = '';
+                if (pBadge) pBadge.textContent = 'EMPTY';
+                this._toast('Keypad cleared (*)', 'i');
+              } else if (payload.key !== undefined) {
+                const key = String(payload.key);
+                if (pIn) {
+                  if (payload.length === 1) {
+                    pIn.value = key;
+                  } else {
+                    pIn.value = (pIn.value || '') + key;
+                  }
+                }
+                // Show masked dots instead of actual chars in badge
+                if (pBadge && pIn) pBadge.textContent = '●'.repeat(pIn.value.length);
+              }
+            }
+
+            // 3. Keypad Pin Submitted (#)
+            // Engine listener ALREADY calls submit_keypad_pin() from KEYPAD_PIN_RESULT.
+            // JS only updates the badge — no second HTTP post.
+            if (evType === 'KEYPAD_PIN_RESULT' || payload.pin !== undefined) {
+              const pin = payload.pin;
+              const pIn = this._el('pinIn');
+              const pBadge = this._el('pinLiveVal');
+              if (pin) {
+                if (pIn) pIn.value = pin;
+                if (pBadge) pBadge.textContent = '●'.repeat(pin.length) + ' (SUBMITTED)';
+                this._toast('[ PIN ] Submitted — verifying...', 'i');
+              }
+            }
+          }
           this._fetchAll();
         }
       } catch {}
@@ -273,6 +495,8 @@ class VaultClient {
   /* ── HUD renderer ── */
   _renderHUD(s) {
     if (!s) return;
+    // Track current FSM state so hardware events can gate correctly
+    this._currentState = s.state || 'IDLE';
 
     // OLED
     if (s.display) {
@@ -463,6 +687,77 @@ class VaultClient {
       ov.classList.add('out');
       setTimeout(() => { if (ov.parentNode) ov.remove(); }, 900);
     }, 6200);
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     AUTHENTICATION FAILED OVERLAY
+     Red-themed mirror of _showAuthAnimation
+     ══════════════════════════════════════════════════════════════ */
+  _showFailAnimation() {
+    if (document.getElementById('failOv')) return;   // debounce
+
+    const ov = document.createElement('div');
+    ov.id        = 'failOv';
+    ov.className = 'fail-ov';
+
+    ov.innerHTML = `
+      <div class="fov-scan"></div>
+      <div class="fov-vign"></div>
+      <div class="fov-grid"></div>
+
+      <!-- Phase 1 — spinner -->
+      <div class="fov-phase-scan" id="fovPScan">
+        <div class="fov-spinner"></div>
+        <div class="fov-scan-txt">VERIFYING CREDENTIALS...</div>
+        <div class="fov-bar"><div class="fov-bar-fill"></div></div>
+      </div>
+
+      <!-- Phase 2 — FAILED headline -->
+      <div class="fov-phase-alert" id="fovPAlert">
+        <div class="fov-icon">✗</div>
+        <h1 class="fov-headline" data-text="ACCESS DENIED">ACCESS DENIED</h1>
+        <div class="fov-sub">AUTHENTICATION FAILED — CHAIN TERMINATED</div>
+      </div>
+
+      <!-- Phase 3 — failure info -->
+      <div class="fov-phase-stats" id="fovPStats">
+        <div class="fov-stat" id="fovS0"><span class="fov-stat-lbl">[ CHAIN RESET ]</span><span class="fov-stat-val">⚠ STAGE DENIED</span></div>
+        <div class="fov-stat" id="fovS1"><span class="fov-stat-lbl">[ STATUS ]</span><span class="fov-stat-val">VAULT LOCKED</span></div>
+        <div class="fov-stat" id="fovS2"><span class="fov-stat-lbl">[ ACTION ]</span><span class="fov-stat-val">RESTART REQUIRED</span></div>
+      </div>
+
+      <div class="fov-hint">— CLICK ANYWHERE TO DISMISS —</div>
+    `;
+
+    ov.addEventListener('click', () => {
+      ov.classList.add('out');
+      setTimeout(() => ov.remove(), 900);
+    });
+
+    document.body.appendChild(ov);
+
+    const show = (id) => { const el = document.getElementById(id); if (el) el.style.display = 'flex'; };
+    const hide = (id) => { const el = document.getElementById(id); if (el) el.style.display = 'none'; };
+
+    // t=1.1s → switch to ACCESS DENIED
+    setTimeout(() => { hide('fovPScan'); show('fovPAlert'); }, 1100);
+
+    // t=2.5s → show failure rows
+    setTimeout(() => {
+      show('fovPStats');
+      ['fovS0','fovS1','fovS2'].forEach((id, i) => {
+        setTimeout(() => {
+          const el = document.getElementById(id);
+          if (el) { el.style.opacity = '1'; el.style.transform = 'translateY(0)'; }
+        }, i * 200);
+      });
+    }, 2500);
+
+    // t=5.5s → auto dismiss
+    setTimeout(() => {
+      ov.classList.add('out');
+      setTimeout(() => { if (ov.parentNode) ov.remove(); }, 900);
+    }, 5500);
   }
 }
 
