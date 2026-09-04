@@ -28,6 +28,14 @@
 #define RED_LED          15     // Access Denied / Warning Indicator (Active High)
 #define BUZZER_PIN       21     // Active Buzzer / Audio Tone (PWM)
 
+// 4-Motor Getaway Chassis (Dual H-Bridge / L298N Controller)
+// Left Motor Pair (Front & Rear Left)
+#define M_LEFT_IN1       16     // Left Motors Forward (IN1)
+#define M_LEFT_IN2       17     // Left Motors Reverse (IN2)
+// Right Motor Pair (Front & Rear Right)
+#define M_RIGHT_IN3      0      // Right Motors Forward (IN3)
+#define M_RIGHT_IN4      1      // Right Motors Reverse (IN4)
+
 // MFRC522 RFID (SPI Bus)
 #define RFID_SS_PIN      5      // SDA / SS
 #define RFID_RST_PIN     4      // RST
@@ -89,6 +97,11 @@ int deniedStep = 0;
 // Non-blocking Red LED Timer
 unsigned long redLedOffTimestamp = 0;
 bool redLedTimerActive = false;
+
+// Non-blocking 4-Motor Getaway Timers & State
+unsigned long motorStopTimestamp = 0;
+bool motorsActive = false;
+String currentMotorDirection = "STOPPED";
 
 // Serial Line Receiver Buffer
 String serialRxBuffer = "";
@@ -155,7 +168,67 @@ void setAlarm(unsigned long durationMs) {
 }
 
 // ============================================================================
-// 6. ACTUATOR & LOCK CONTROLS
+// 6. 4-MOTOR GETAWAY CHASSIS CONTROLS
+// ============================================================================
+
+void stopMotors() {
+    digitalWrite(M_LEFT_IN1, LOW);
+    digitalWrite(M_LEFT_IN2, LOW);
+    digitalWrite(M_RIGHT_IN3, LOW);
+    digitalWrite(M_RIGHT_IN4, LOW);
+    motorsActive = false;
+    currentMotorDirection = "STOPPED";
+    motorStopTimestamp = 0;
+
+    JsonDocument payload;
+    payload["status"] = "STOPPED";
+    emitEvent("MOTOR_STOPPED", payload);
+}
+
+void driveMotors(String direction, unsigned long durationMs = 3000) {
+    direction.toUpperCase();
+    if (direction == "FORWARD") {
+        digitalWrite(M_LEFT_IN1, HIGH);
+        digitalWrite(M_LEFT_IN2, LOW);
+        digitalWrite(M_RIGHT_IN3, HIGH);
+        digitalWrite(M_RIGHT_IN4, LOW);
+    } else if (direction == "BACKWARD" || direction == "REVERSE") {
+        digitalWrite(M_LEFT_IN1, LOW);
+        digitalWrite(M_LEFT_IN2, HIGH);
+        digitalWrite(M_RIGHT_IN3, LOW);
+        digitalWrite(M_RIGHT_IN4, HIGH);
+    } else if (direction == "LEFT") {
+        digitalWrite(M_LEFT_IN1, LOW);
+        digitalWrite(M_LEFT_IN2, HIGH);
+        digitalWrite(M_RIGHT_IN3, HIGH);
+        digitalWrite(M_RIGHT_IN4, LOW);
+    } else if (direction == "RIGHT") {
+        digitalWrite(M_LEFT_IN1, HIGH);
+        digitalWrite(M_LEFT_IN2, LOW);
+        digitalWrite(M_RIGHT_IN3, LOW);
+        digitalWrite(M_RIGHT_IN4, HIGH);
+    } else {
+        stopMotors();
+        return;
+    }
+
+    motorsActive = true;
+    currentMotorDirection = direction;
+    if (durationMs > 0) {
+        motorStopTimestamp = millis() + durationMs;
+    } else {
+        motorStopTimestamp = 0;
+    }
+
+    JsonDocument payload;
+    payload["status"] = "RUNNING";
+    payload["direction"] = direction;
+    payload["duration_ms"] = durationMs;
+    emitEvent("MOTOR_ACTIVATED", payload);
+}
+
+// ============================================================================
+// 7. ACTUATOR & LOCK CONTROLS
 // ============================================================================
 
 void setLock(bool locked, unsigned long holdDurationMs = AUTO_RELOCK_DEFAULT_MS) {
@@ -163,6 +236,7 @@ void setLock(bool locked, unsigned long holdDurationMs = AUTO_RELOCK_DEFAULT_MS)
     if (isLocked) {
         lockServo.write(LOCKED_POSITION);
         digitalWrite(GREEN_LED, LOW);
+        stopMotors();
         autoRelockPending = false;
     } else {
         lockServo.write(UNLOCKED_POSITION);
@@ -172,6 +246,9 @@ void setLock(bool locked, unsigned long holdDurationMs = AUTO_RELOCK_DEFAULT_MS)
         unlockTimestamp = millis();
         autoRelockDurationMs = holdDurationMs > 0 ? holdDurationMs : AUTO_RELOCK_DEFAULT_MS;
         autoRelockPending = true;
+
+        // 🚗 DRIVE THE VAULT AWAY ON AUTHENTICATION UNLOCK
+        driveMotors("FORWARD", autoRelockDurationMs);
     }
 
     JsonDocument payload;
@@ -182,7 +259,7 @@ void setLock(bool locked, unsigned long holdDurationMs = AUTO_RELOCK_DEFAULT_MS)
 }
 
 // ============================================================================
-// 7. INBOUND SERIAL JSON COMMAND DISPATCHER
+// 8. INBOUND SERIAL JSON COMMAND DISPATCHER
 // ============================================================================
 
 void processCommand(const String& jsonStr) {
@@ -201,6 +278,14 @@ void processCommand(const String& jsonStr) {
     }
     else if (cmd == "COMMAND_LOCK" || (cmd == "SET_LOCK" && String(doc["state"] | "") == "LOCKED")) {
         setLock(true);
+    }
+    else if (cmd == "DRIVE_MOTORS" || cmd == "MOTOR_DRIVE") {
+        String dir = doc["direction"] | doc["parameters"]["direction"] | "FORWARD";
+        unsigned long dur = doc["duration_ms"] | doc["parameters"]["duration_ms"] | 3000;
+        driveMotors(dir, dur);
+    }
+    else if (cmd == "STOP_MOTORS" || cmd == "MOTOR_STOP") {
+        stopMotors();
     }
     else if (cmd == "TRIGGER_ALARM") {
         unsigned long dur = doc["parameters"]["duration_ms"] | doc["duration_ms"] | 3000;
@@ -318,18 +403,23 @@ void pollRFID() {
 void updateTimers() {
     unsigned long now = millis();
 
-    // 1. Non-Blocking 5-Second Auto-Relock
+    // 1. Non-Blocking Auto-Relock
     if (autoRelockPending && (now - unlockTimestamp >= autoRelockDurationMs)) {
         setLock(true);
     }
 
-    // 2. Denied Second Beep Tone Sequence
+    // 2. Non-Blocking 4-Motor Runaway Auto-Stop Timer
+    if (motorsActive && motorStopTimestamp > 0 && now >= motorStopTimestamp) {
+        stopMotors();
+    }
+
+    // 3. Denied Second Beep Tone Sequence
     if (deniedStep == 1 && now >= deniedStepTimestamp) {
         tone(BUZZER_PIN, 500, 180);
         deniedStep = 0;
     }
 
-    // 3. Red LED Pulse Timer
+    // 4. Red LED Pulse Timer
     if (redLedTimerActive && now >= redLedOffTimestamp) {
         if (!alarmActive) {
             digitalWrite(RED_LED, LOW);
@@ -337,7 +427,7 @@ void updateTimers() {
         redLedTimerActive = false;
     }
 
-    // 4. Warning / Alarm Siren Modulation
+    // 5. Warning / Alarm Siren Modulation
     if (alarmActive) {
         if (now < alarmUntilMs) {
             if (now - lastAlarmToggleMs >= 150) {
@@ -353,7 +443,7 @@ void updateTimers() {
 }
 
 // ============================================================================
-// 9. SETUP & MAIN LOOP
+// 10. SETUP & MAIN LOOP
 // ============================================================================
 
 void setup() {
@@ -361,12 +451,18 @@ void setup() {
     Serial.begin(115200);
     while (!Serial && millis() < 1200);
 
-    // 2. Initialize GPIO Output Pins
+    // 2. Initialize GPIO Output Pins (LEDs, Buzzer, 4-Motor Drivers)
     pinMode(GREEN_LED, OUTPUT);
     pinMode(RED_LED, OUTPUT);
     pinMode(BUZZER_PIN, OUTPUT);
     pinMode(RFID_RST_PIN, OUTPUT);
     digitalWrite(RFID_RST_PIN, HIGH);
+
+    pinMode(M_LEFT_IN1, OUTPUT);
+    pinMode(M_LEFT_IN2, OUTPUT);
+    pinMode(M_RIGHT_IN3, OUTPUT);
+    pinMode(M_RIGHT_IN4, OUTPUT);
+    stopMotors();
 
     digitalWrite(GREEN_LED, LOW);
     digitalWrite(RED_LED, LOW);

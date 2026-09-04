@@ -14,6 +14,7 @@ from app.api.schemas import (
     FaceInputRequest,
     GenericResponse,
     KeypadPinInputRequest,
+    MotorDriveRequest,
     ResetVaultRequest,
     RfidInputRequest,
     TamperRequest,
@@ -173,6 +174,50 @@ async def reset_vault(
         message="Vault safely reset to IDLE state.",
         data={"state": engine.state.value},
     )
+
+
+@router.post(
+    "/api/v1/vault/motors/drive",
+    response_model=GenericResponse,
+    summary="Actuate 4-motor getaway chassis",
+)
+async def drive_motors(
+    payload: MotorDriveRequest,
+    hardware: HardwareInterface = Depends(get_hardware),
+) -> GenericResponse:
+    """Manually command the 4 getaway motors."""
+    success = await hardware.drive_motors(
+        direction=payload.direction,
+        duration_ms=payload.duration_ms,
+        speed=payload.speed,
+    )
+    return GenericResponse(
+        success=success,
+        message=f"4-motor getaway activated ({payload.direction}, {payload.duration_ms}ms, Speed: {payload.speed})",
+        data={
+            "direction": payload.direction,
+            "duration_ms": payload.duration_ms,
+            "speed": payload.speed,
+        },
+    )
+
+
+@router.post(
+    "/api/v1/vault/motors/stop",
+    response_model=GenericResponse,
+    summary="Halt 4-motor getaway chassis",
+)
+async def stop_motors(
+    hardware: HardwareInterface = Depends(get_hardware),
+) -> GenericResponse:
+    """Halt all 4 getaway motors immediately."""
+    success = await hardware.stop_motors()
+    return GenericResponse(
+        success=success,
+        message="4-motor getaway chassis halted.",
+        data={},
+    )
+
 
 
 # ============================================================================

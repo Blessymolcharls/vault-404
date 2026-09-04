@@ -14,6 +14,12 @@
 #define RED_LED        15
 #define BUZZER_PIN     21
 
+// 4-Motor Getaway Chassis Pins (Dual H-Bridge Mode)
+#define M_LEFT_IN1     16
+#define M_LEFT_IN2     17
+#define M_RIGHT_IN3    0
+#define M_RIGHT_IN4    1
+
 // Servo Positions
 const int LOCKED_POSITION   = 0;
 const int UNLOCKED_POSITION = 90;
@@ -70,6 +76,11 @@ bool autoRelockPending = false;
 unsigned long redLedOffTimestamp = 0;
 bool redLedTimerActive = false;
 
+// Non-blocking 4-Motor Getaway Timers & State
+unsigned long motorStopTimestamp = 0;
+bool motorsActive = false;
+String currentMotorDirection = "STOPPED";
+
 String serialRxBuffer = "";
 
 // ============================================================================
@@ -103,6 +114,66 @@ void soundErrorTone() {
 }
 
 // ============================================================================
+// 4-Motor Getaway Chassis Controls
+// ============================================================================
+
+void stopMotors() {
+    digitalWrite(M_LEFT_IN1, LOW);
+    digitalWrite(M_LEFT_IN2, LOW);
+    digitalWrite(M_RIGHT_IN3, LOW);
+    digitalWrite(M_RIGHT_IN4, LOW);
+    motorsActive = false;
+    currentMotorDirection = "STOPPED";
+    motorStopTimestamp = 0;
+
+    JsonDocument payload;
+    payload["status"] = "STOPPED";
+    emitEvent("MOTOR_STOPPED", payload);
+}
+
+void driveMotors(String direction, unsigned long durationMs = 3000) {
+    direction.toUpperCase();
+    if (direction == "FORWARD") {
+        digitalWrite(M_LEFT_IN1, HIGH);
+        digitalWrite(M_LEFT_IN2, LOW);
+        digitalWrite(M_RIGHT_IN3, HIGH);
+        digitalWrite(M_RIGHT_IN4, LOW);
+    } else if (direction == "BACKWARD" || direction == "REVERSE") {
+        digitalWrite(M_LEFT_IN1, LOW);
+        digitalWrite(M_LEFT_IN2, HIGH);
+        digitalWrite(M_RIGHT_IN3, LOW);
+        digitalWrite(M_RIGHT_IN4, HIGH);
+    } else if (direction == "LEFT") {
+        digitalWrite(M_LEFT_IN1, LOW);
+        digitalWrite(M_LEFT_IN2, HIGH);
+        digitalWrite(M_RIGHT_IN3, HIGH);
+        digitalWrite(M_RIGHT_IN4, LOW);
+    } else if (direction == "RIGHT") {
+        digitalWrite(M_LEFT_IN1, HIGH);
+        digitalWrite(M_LEFT_IN2, LOW);
+        digitalWrite(M_RIGHT_IN3, LOW);
+        digitalWrite(M_RIGHT_IN4, HIGH);
+    } else {
+        stopMotors();
+        return;
+    }
+
+    motorsActive = true;
+    currentMotorDirection = direction;
+    if (durationMs > 0) {
+        motorStopTimestamp = millis() + durationMs;
+    } else {
+        motorStopTimestamp = 0;
+    }
+
+    JsonDocument payload;
+    payload["status"] = "RUNNING";
+    payload["direction"] = direction;
+    payload["duration_ms"] = durationMs;
+    emitEvent("MOTOR_ACTIVATED", payload);
+}
+
+// ============================================================================
 // Hardware Actuation Methods
 // ============================================================================
 
@@ -116,6 +187,7 @@ void setLockState(bool locked) {
     if (isLocked) {
         lockServo.write(LOCKED_POSITION);
         digitalWrite(GREEN_LED, LOW);
+        stopMotors();
         autoRelockPending = false;
         passwordVerified = false;
         Serial.println("Servo: LOCKED (0 deg)");
@@ -127,6 +199,9 @@ void setLockState(bool locked) {
         autoRelockPending = true;
         passwordVerified = true;
         Serial.println("Servo: UNLOCKED (90 deg)");
+
+        // 🚗 DRIVE THE VAULT AWAY ON AUTHENTICATION UNLOCK
+        driveMotors("FORWARD", UNLOCK_HOLD_MS);
     }
 
     JsonDocument payload;
@@ -240,6 +315,16 @@ void processJsonCommand(const String& jsonLine) {
     else if (strcmp(cmd, "COMMAND_LOCK") == 0 || (strcmp(cmd, "SET_LOCK") == 0 && doc["state"] == "LOCKED")) {
         setLockState(true);
     }
+    // 4-Motor Drive Command
+    else if (strcmp(cmd, "DRIVE_MOTORS") == 0 || strcmp(cmd, "MOTOR_DRIVE") == 0) {
+        String dir = doc["direction"] | doc["parameters"]["direction"] | "FORWARD";
+        unsigned long dur = doc["duration_ms"] | doc["parameters"]["duration_ms"] | 3000;
+        driveMotors(dir, dur);
+    }
+    // 4-Motor Stop Command
+    else if (strcmp(cmd, "STOP_MOTORS") == 0 || strcmp(cmd, "MOTOR_STOP") == 0) {
+        stopMotors();
+    }
     // Alarm Trigger (Failed authentication or tamper)
     else if (strcmp(cmd, "TRIGGER_ALARM") == 0) {
         Serial.println("================================");
@@ -320,6 +405,11 @@ void updateTimers() {
         Serial.println();
     }
 
+    // 4-Motor Runaway Auto-Stop Timer
+    if (motorsActive && motorStopTimestamp > 0 && (now >= motorStopTimestamp)) {
+        stopMotors();
+    }
+
     // Turn off Red LED after error timeout
     if (redLedTimerActive && (now >= redLedOffTimestamp)) {
         digitalWrite(RED_LED, LOW);
@@ -340,11 +430,17 @@ void setup() {
     Serial.println("       BISCUIT VAULT (404)");
     Serial.println("================================");
 
-    // Setup LEDs
+    // Setup LEDs & 4-Motor Drivers
     pinMode(GREEN_LED, OUTPUT);
     pinMode(RED_LED, OUTPUT);
     digitalWrite(GREEN_LED, LOW);
     digitalWrite(RED_LED, LOW);
+
+    pinMode(M_LEFT_IN1, OUTPUT);
+    pinMode(M_LEFT_IN2, OUTPUT);
+    pinMode(M_RIGHT_IN3, OUTPUT);
+    pinMode(M_RIGHT_IN4, OUTPUT);
+    stopMotors();
 
     // Setup Buzzer
     pinMode(BUZZER_PIN, OUTPUT);

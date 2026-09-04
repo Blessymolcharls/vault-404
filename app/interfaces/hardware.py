@@ -78,3 +78,26 @@ class HardwareInterface(ABC):
     async def set_password(self, password: str) -> bool:
         """Set the active hardware password on the microcontroller."""
         return True
+
+    async def drive_motors(
+        self, direction: str = "FORWARD", duration_ms: int = 3000, speed: int = 255
+    ) -> bool:
+        """Actuate the 4-motor getaway chassis.
+
+        Args:
+            direction: Movement vector ("FORWARD", "BACKWARD", "LEFT", "RIGHT").
+            duration_ms: Duration in milliseconds before stopping (0 for continuous).
+            speed: Motor PWM duty cycle (0-255).
+
+        Returns:
+            bool: True if motor command was transmitted and accepted.
+        """
+        return True
+
+    async def stop_motors(self) -> bool:
+        """Halt all getaway chassis motors immediately.
+
+        Returns:
+            bool: True if stop command was transmitted.
+        """
+        return True
