@@ -220,87 +220,79 @@ graph LR
 
 ## 🔌 ESP32 Pinout & Wiring Matrix
 
-| Peripheral Component | Pin Name | ESP32 GPIO | Electrical / Protocol Notes |
+### ESP32 Dev Module Header Pin Map
+```text
+LEFT SIDE (Header 1)         RIGHT SIDE (Header 2)
+--------------------         ---------------------
+3V3   ──► RC522 VCC (3.3V)   VIN  ──► Servo VCC (5V)
+GND   ──► Common GND         GND  ──► Common GND
+D15   ──► Red LED Anode      D13  ──► Keypad Row 1
+D2    ──► Servo PWM Signal   D12  ──► Keypad Row 2
+D4    ──► RC522 RST          D14  ──► Keypad Row 3
+RX2   ──► (Reserved)         D27  ──► Keypad Row 4
+TX2   ──► (Reserved)         D26  ──► Keypad Col 1
+D5    ──► RC522 SDA (SS)     D25  ──► Keypad Col 2
+D18   ──► RC522 SCK          D33  ──► Keypad Col 3
+D19   ──► RC522 MISO         D32  ──► Keypad Col 4
+D21   ──► Active Buzzer SIG  D35  ──► (Input Only)
+RX0   ──► USB Programming    D34  ──► (Input Only)
+TX0   ──► USB Programming    VN   ──► (Sensor VP)
+D22   ──► Green LED Anode    VP   ──► (Sensor VN)
+D23   ──► RC522 MOSI         EN   ──► Reset
+```
+
+### Complete Hardware Interconnect Table
+
+| Module / Component | Module Pin | ESP32 Connection | Electrical / Power Notes |
 | :--- | :--- | :--- | :--- |
-| **MFRC522 RFID Reader** | SDA(SS) / SCK / MOSI / MISO / RST | **GPIO 5, 18, 23, 19, 4** | SPI Bus ($3.3\text{V}$ Logic & Power) |
-| **4x4 Matrix Keypad** | Row 1 / Row 2 / Row 3 / Row 4 | **GPIO 13, 12, 14, 27** | Driven as sequential scan outputs |
-| | Col 1 / Col 2 / Col 3 / Col 4 | **GPIO 26, 25, 33, 32** | Read as inputs with internal pull-ups |
-| **Lock Servo Actuator** | PWM Signal | **GPIO 2** | `0°` = Locked, `90°` = Unlocked (50Hz PWM, 5V VCC) |
-| **Status Green LED** | Granted / Success | **GPIO 22** | Active-High with 220Ω current limiting resistor |
-| **Status Red LED** | Denied / Alarm | **GPIO 15** | Active-High with 220Ω current limiting resistor |
-| **Active Buzzer** | Audio Tone & Chirp | **GPIO 21** | PWM tone generator (1000Hz, 2000Hz, etc.) |
-| **4-Motor Getaway Driver**| IN1 / IN2 (Left/Right Motors) | **GPIO 16, 17** | Dual H-Bridge Motor Driver (L298N / TB6612FNG) |
+| **4x4 Keypad** | Row 1 (Pin 1) | **GPIO 13 (D13)** | Sequential scan row output |
+| | Row 2 (Pin 2) | **GPIO 12 (D12)** | Sequential scan row output |
+| | Row 3 (Pin 3) | **GPIO 14 (D14)** | Sequential scan row output |
+| | Row 4 (Pin 4) | **GPIO 27 (D27)** | Sequential scan row output |
+| | Col 1 (Pin 5) | **GPIO 26 (D26)** | Column input with pull-up |
+| | Col 2 (Pin 6) | **GPIO 25 (D25)** | Column input with pull-up |
+| | Col 3 (Pin 7) | **GPIO 33 (D33)** | Column input with pull-up |
+| | Col 4 (Pin 8) | **GPIO 32 (D32)** | Column input with pull-up |
+| **RC522 RFID Reader** | SDA / SS | **GPIO 5 (D5)** | SPI Chip Select |
+| | SCK | **GPIO 18 (D18)** | SPI Clock |
+| | MOSI | **GPIO 23 (D23)** | SPI Master Out Slave In |
+| | MISO | **GPIO 19 (D19)** | SPI Master In Slave Out |
+| | RST | **GPIO 4 (D4)** | Hardware Reset Pin |
+| | 3.3V (VCC) | **ESP32 3V3** | ⚠️ **Must be 3.3V (Do NOT connect to 5V)** |
+| | GND | **ESP32 GND** | Common Ground |
+| **Status Green LED** | Anode (+) | **GPIO 22 (D22)** | Via 220Ω–330Ω current limiting resistor |
+| | Cathode (-) | **ESP32 GND** | Common Ground |
+| **Status Red LED** | Anode (+) | **GPIO 15 (D15)** | Via 220Ω–330Ω current limiting resistor |
+| | Cathode (-) | **ESP32 GND** | Common Ground |
+| **Active Buzzer** | VCC / SIG (+) | **GPIO 21 (D21)** | Audible tone & chirps (PWM) |
+| | GND (-) | **ESP32 GND** | Common Ground |
+| **Micro Servo Actuator** | Signal / PWM (Orange) | **GPIO 2 (D2)** | 50Hz PWM (`0°` Locked, `90°` Unlocked) |
+| | VCC / V+ (Red) | **ESP32 VIN** | 5V regulated power rail |
+| | GND (Brown/Black) | **ESP32 GND** | Common Ground |
+| **L298N Motor Driver** | IN1 (Left Forward) | **GPIO 16 (RX2)** | Left Motors Forward control |
+| | IN2 (Left Reverse) | **GPIO 17 (TX2)** | Left Motors Reverse control |
+| | IN3 (Right Forward) | **Jumper to IN1** | Driven in parallel with IN1 |
+| | IN4 (Right Reverse) | **Jumper to IN2** | Driven in parallel with IN2 |
+| | ENA / ENB | **Jumper Installed** | Full speed 100% duty cycle |
+| | +12V / VS | **+12V Supply (+)** | External 12V DC Motor Power |
+| | GND | **Common GND** | Tied to 12V (-) and ESP32 GND |
+| **4 DC Getaway Motors** | Left Motor 1 & 2 | **L298N OUT1 & OUT2** | Wired in parallel on Left side |
+| | Right Motor 1 & 2 | **L298N OUT3 & OUT4** | Wired in parallel on Right side |
 
 ---
 
-## 🚀 Quickstart & Deployment Guide
+### Power Distribution & Common Ground Architecture
+```text
+12V DC Supply (+)  ───────────────────────► L298N +12V / VS (Motor Power)
+12V DC Supply (-)  ──┬────────────────────► L298N GND
+                     │
+ESP32 GND            └───[ Common GND ]───► ESP32 GND & All Sensor/LED Cathodes
 
-### 1. Python Environment Setup
-```powershell
-# Create and activate virtual environment
-python -m venv .venv
-.venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Configure environment variables (.env)
-cp .env.example .env
-# Set your actual vault password in .env:
-# VAULT_PASSWORD=YourSecretPassword123!
+ESP32 3V3 Rail       ─────────────────────► MFRC522 VCC (3.3V Logic & Radio)
+ESP32 VIN (5V Rail)  ─────────────────────► Micro-Servo 9g VCC (Red Wire)
 ```
 
-### 2. Flashing the ESP32 (Arduino IDE)
-1. Open **Arduino IDE**.
-2. Open the sketch: [`firmware/arduino_vault/arduino_vault.ino`](file:///c:/Users/bless/GIT/vault-404/firmware/arduino_vault/arduino_vault.ino).
-3. Install required libraries from Library Manager (`Ctrl + Shift + I`):
-   - `Keypad` by Mark Stanley, Alexander Brevig
-   - `ESP32Servo` by Kevin Harrington
-   - `MFRC522` by GithubCommunity / miguelbalboa
-   - `ArduinoJson` by Benoit Blanchon (v7.x or v6.x)
-4. Select Board: **ESP32 Dev Module**.
-5. Select Port: (e.g. `COM3` on Windows or `/dev/ttyUSB0` on Linux).
-6. Click **Upload**.
-
-### 3. Run Physical Hardware Diagnostic Suite
-Test all physical hardware peripherals interactively:
-```powershell
-python test_hardware_live.py
-```
-*(To test without waiting for physical inputs: `python test_hardware_live.py --dry-run`)*
-
-### 4. Run the Vault-404 Backend Server & Web Terminal
-```powershell
-# Set your secure password:
-$env:VAULT_PASSWORD="YourSecretPassword123!"
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
-```
-Open **[http://127.0.0.1:8000](http://127.0.0.1:8000)** to view the live security terminal.
-
-### 5. Automated Tests
-```powershell
-python -m pytest test_password_auth_architecture.py test_keypad_hardware_integration.py
-```
-
-For Hardware:
-
-# Schematic & Circuit
-**Hardware Deployment Guide (ESP32 Integration)**
-| Peripheral Component | Pin Name | ESP32 GPIO | Notes |
-| :--- | :--- | :--- | :--- |
-| **MFRC522 RFID Reader** | SDA / SS | **GPIO 5** | SPI Chip Select |
-| | SCK | **GPIO 18** | SPI Clock |
-| | MOSI | **GPIO 23** | SPI Master Out |
-| | MISO | **GPIO 19** | SPI Master In |
-| | RST | **GPIO 4** | Reset Pin |
-| | 3.3V / GND | 3.3V / GND | **Do not power with 5V** |
-| **4x4 Matrix Keypad** | Rows 1..4 | **GPIO 13, 12, 14, 27** | Matrix Scan Rows |
-| | Cols 1..4 | **GPIO 26, 25, 33, 32** | Matrix Scan Cols |
-| **Lock Servo Actuator** | Signal | **GPIO 2** | 50Hz PWM Servo Actuator (5V Power) |
-| **Getaway Motor Driver**| IN1 / IN2 | **GPIO 16, 17** | L298N Dual H-Bridge Motor Control |
-| **Status Green LED** | Anode | **GPIO 22** | Access Granted Indicator |
-| **Status Red LED** | Anode | **GPIO 15** | Access Denied / Alarm Indicator |
-| **Active Buzzer** | SIG | **GPIO 21** | Audio Feedback & Audible Alarm |
+---
 
 # Build Photos
 *Hardware chassis, dual H-bridge motor integration, and ESP32 control board photographs are available in the project drive media folder.*

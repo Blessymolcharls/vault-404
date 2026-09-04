@@ -2,13 +2,13 @@
 
 Tests all physical peripherals end-to-end:
 1. Serial UART Handshake (ESP32 Ping / Heartbeat)
-2. Servo Lock Actuation (0° -> 90° -> 0°)
-3. Indicator LEDs & Buzzer Audio Tone Profiles (Green/Red LEDs, Active Buzzer)
-4. 4x4 Matrix Keypad Polling & Echo
-5. MFRC522 RFID Card / Tag Scanner
-6. AS608 Optical Fingerprint Biometric Scanner
-7. Physical Webcam Capture & Laplacian Sharpness Anti-Spoofing Filter
-8. Physical Microphone Capture & RMS Audio Power Spectrum
+2. Servo Lock Actuation (GPIO 2: 0° -> 90° -> 0°)
+3. Indicator LEDs & Buzzer Audio Tone Profiles (GPIO 22/15/21)
+4. 4x4 Matrix Keypad Polling & Echo (Rows: 13,12,14,27 | Cols: 26,25,33,32)
+5. MFRC522 RFID Card / Tag Scanner (SPI Bus: GPIO 5, 18, 23, 19, 4)
+6. Physical Webcam Capture & Laplacian Sharpness Anti-Spoofing Filter
+7. Physical Microphone Capture & RMS Audio Power Spectrum
+8. L298N 4-Motor Getaway Chassis (GPIO 16 / 17 Dual H-Bridge)
 """
 
 import argparse
