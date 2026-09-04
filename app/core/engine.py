@@ -436,33 +436,18 @@ class VaultAuthEngine:
                     logger.error(f"Error in custom RFID validator: {ex}")
                     is_valid = False
             else:
-                # 2. Check preconfigured allowlist
+                # 2. Check preconfigured allowlist (e.g. 39D74320)
                 if normalized_uid in self._config.valid_rfid_uids:
                     is_valid = True
 
-                # 3. Check database repository
+                # 3. Check database repository for matching enrolled user
                 if self._repository:
                     try:
                         matched_user = await self._repository.get_user_by_rfid(normalized_uid)
                         if matched_user:
                             is_valid = True
-                        else:
-                            users = await self._repository.list_users()
-                            if users:
-                                matched_user = users[0]
-                                is_valid = True
-                                try:
-                                    await self._repository.update_user_rfid(matched_user.id, normalized_uid)
-                                    logger.info(f"Auto-paired scanned RFID tag '{normalized_uid}' with operator '{matched_user.username}'.")
-                                except Exception as err:
-                                    logger.debug(f"Could not auto-pair RFID tag: {err}")
                     except Exception as ex:
                         logger.error(f"Database lookup during RFID verification: {ex}")
-
-                # 4. Standalone valid HEX UID fallback
-                if not is_valid and re.match(r"^[0-9A-F]{4,16}$", normalized_uid):
-                    logger.info(f"Accepting physical RFID tag '{normalized_uid}' in standalone mode.")
-                    is_valid = True
 
             if not is_valid:
                 logger.warning(f"[STAGE 1 FAIL] RFID UID '{normalized_uid}' not in authorized allowlist.")
@@ -476,10 +461,6 @@ class VaultAuthEngine:
             if self._repository and not matched_user:
                 try:
                     matched_user = await self._repository.get_user_by_rfid(normalized_uid)
-                    if not matched_user:
-                        users = await self._repository.list_users()
-                        if users:
-                            matched_user = users[0]
                 except Exception as ex:
                     logger.error(f"Database lookup during operator context load: {ex}")
 
@@ -927,7 +908,7 @@ class VaultAuthEngine:
                     line1="[1/4] SCAN RFID",
                     line2="HOLD CARD NEAR",
                     led_color=LedColor.CYAN,
-                    buzzer=True,
+                    buzzer=False,
                     duration_ms=500,
                 )
             )
@@ -939,7 +920,7 @@ class VaultAuthEngine:
                     line1="[2/4] FACE SCAN",
                     line2="LOOK AT CAMERA",
                     led_color=LedColor.CYAN,
-                    buzzer=True,
+                    buzzer=False,
                     duration_ms=500,
                 )
             )
@@ -955,7 +936,7 @@ class VaultAuthEngine:
                     line1="[3/4] ENTER PIN",
                     line2="KEYPAD INPUT",
                     led_color=LedColor.CYAN,
-                    buzzer=True,
+                    buzzer=False,
                     duration_ms=500,
                 )
             )
@@ -968,7 +949,7 @@ class VaultAuthEngine:
                     line1="[4/4] VOICE PHRASE",
                     line2="SPEAK PASSPHRASE",
                     led_color=LedColor.CYAN,
-                    buzzer=True,
+                    buzzer=False,
                     duration_ms=500,
                 )
             )

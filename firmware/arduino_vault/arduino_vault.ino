@@ -235,12 +235,15 @@ void setLock(bool locked, unsigned long holdDurationMs = AUTO_RELOCK_DEFAULT_MS)
     if (isLocked) {
         lockServo.write(LOCKED_POSITION);
         digitalWrite(GREEN_LED, LOW);
+        digitalWrite(RED_LED, LOW);
+        redLedTimerActive = false;
         stopMotors();
         autoRelockPending = false;
     } else {
         lockServo.write(UNLOCKED_POSITION);
         digitalWrite(GREEN_LED, HIGH);
         digitalWrite(RED_LED, LOW);
+        redLedTimerActive = false;
         playSuccessTone();
         unlockTimestamp = millis();
         autoRelockDurationMs = holdDurationMs > 0 ? holdDurationMs : AUTO_RELOCK_DEFAULT_MS;
@@ -297,16 +300,27 @@ void processCommand(const String& jsonStr) {
         if (led == "GREEN") {
             digitalWrite(GREEN_LED, HIGH);
             digitalWrite(RED_LED, LOW);
+            redLedTimerActive = false;
+            if (buzzer) {
+                playSuccessTone();
+            }
         } else if (led == "RED") {
             digitalWrite(RED_LED, HIGH);
             digitalWrite(GREEN_LED, LOW);
-        } else if (led == "OFF") {
+            unsigned long dur = doc["duration_ms"] | 2500;
+            redLedOffTimestamp = millis() + dur;
+            redLedTimerActive = true;
+            if (buzzer) {
+                startDeniedToneSequence();
+            }
+        } else {
+            // BLUE, CYAN, OFF -> Red and Green are OFF
             digitalWrite(GREEN_LED, LOW);
             digitalWrite(RED_LED, LOW);
-        }
-
-        if (buzzer) {
-            startDeniedToneSequence();
+            redLedTimerActive = false;
+            if (buzzer) {
+                playKeyClickTone();
+            }
         }
     }
     else if (cmd == "ENABLE_KEYPAD") {
