@@ -149,7 +149,7 @@ flowchart TD
         RESTClient["HTTP REST Client (/api/v1/...)"]
     end
 
-    subgraph Backend["FastAPI Application Server (:8000)"]
+    subgraph HostServer["FastAPI Application Server (:8000)"]
         Router["REST Endpoints & WebSocket Manager"]
         FSM["VaultAuthEngine (Core Finite State Machine)"]
         CV["Computer Vision Subsystem (OpenCV + 256D Embeddings)"]
@@ -159,13 +159,33 @@ flowchart TD
         Adapter["ESP32SerialAdapter (Production Hardware Link)"]
     end
 
-    subgraph Microcontroller["ESP32 Embedded C++ Firmware"]
-        ESP32["ESP32 Dev Module (115200 Baud JSON-RPC)"]
-        RFID["MFRC522 RFID SPI Reader (GPIO 5, 4, 18, 19, 23)"]
-        Keypad["4x4 Matrix Keypad (Rows: 13,12,14,27 | Cols: 26,25,33,32)"]
-        Servo["Micro Servo Lock Actuator (GPIO 2)"]
-        Motors["Dual H-Bridge 4-Motor Getaway Chassis (GPIO 16, 17)"]
-        Indicators["Green LED (GPIO 22), Red LED (GPIO 15), Buzzer (GPIO 21)"]
+    subgraph Microcontroller["ESP32 Embedded Microcontroller (30-Pin)"]
+        ESP32["ESP32 Core Controller (115200 Baud JSON-RPC)"]
+        
+        subgraph KeypadModule["4x4 Matrix Keypad"]
+            K_Rows["Rows: GPIO 13, 12, 14, 27"]
+            K_Cols["Cols: GPIO 26, 25, 33, 32"]
+        end
+        
+        subgraph RFIDModule["MFRC522 RFID SPI (3.3V)"]
+            RFID_SPI["SDA:5, SCK:18, MOSI:23, MISO:19, RST:4"]
+        end
+        
+        subgraph FeedbackModule["Audio/Visual Indicators"]
+            LED_G["Green LED: GPIO 22 (+ Resistor)"]
+            LED_R["Red LED: GPIO 15 (+ Resistor)"]
+            BUZZ["Active Buzzer: GPIO 21"]
+        end
+        
+        subgraph ActuatorModule["Lock & Mobility Actuators"]
+            SERVO["Micro-Servo Lock: GPIO 2 (VIN 5V)"]
+            L298N["L298N Dual H-Bridge (IN1: 16, IN2: 17)"]
+        end
+    end
+
+    subgraph MotorsChassis["4-Motor Getaway Chassis (12V Power)"]
+        LM["Left Motors 1 & 2 (Parallel -> OUT1 / OUT2)"]
+        RM["Right Motors 1 & 2 (Parallel -> OUT3 / OUT4)"]
     end
 
     UI <--> WSClient
@@ -179,31 +199,135 @@ flowchart TD
     FSM --> Audit
     FSM <--> Adapter
     Adapter <-->|USB UART 115200 Baud| ESP32
-    ESP32 --> RFID
-    ESP32 --> Keypad
-    ESP32 --> Servo
-    ESP32 --> Motors
-    ESP32 --> Indicators
+    ESP32 --> KeypadModule
+    ESP32 --> RFIDModule
+    ESP32 --> FeedbackModule
+    ESP32 --> SERVO
+    ESP32 --> L298N
+    L298N --> LM
+    L298N --> RM
 ```
 
-### 3. ESP32 Hardware Wiring & Peripheral Interconnect
+### 3. ESP32 Hardware Wiring & Pin Interconnect Matrix
 ```mermaid
-graph LR
-    subgraph ESP32["ESP32 Microcontroller Core"]
-        SPI_BUS["SPI Bus: GPIO 5 (SS), 4 (RST), 18 (SCK), 19 (MISO), 23 (MOSI)"]
-        KEYPAD_ROWS["Rows: GPIO 13, 12, 14, 27"]
-        KEYPAD_COLS["Cols: GPIO 26, 25, 33, 32"]
-        SERVO_PIN["PWM Signal: GPIO 2"]
-        MOTOR_PINS["Motor IN1/IN2: GPIO 16, 17"]
-        STATUS_PINS["LED & Buzzer: GPIO 22 (Green), GPIO 15 (Red), GPIO 21 (Tone)"]
+graph TD
+    subgraph ESP32_Left["ESP32 Left Header"]
+        P_3V3["3V3 Rail"]
+        P_GND1["GND"]
+        P_D15["GPIO 15 (D15)"]
+        P_D2["GPIO 2 (D2)"]
+        P_D4["GPIO 4 (D4)"]
+        P_D5["GPIO 5 (D5)"]
+        P_D18["GPIO 18 (D18)"]
+        P_D19["GPIO 19 (D19)"]
+        P_D21["GPIO 21 (D21)"]
+        P_D22["GPIO 22 (D22)"]
+        P_D23["GPIO 23 (D23)"]
+        P_GPIO16["GPIO 16 (RX2)"]
+        P_GPIO17["GPIO 17 (TX2)"]
     end
 
-    SPI_BUS <==> RFID_HW["MFRC522 13.56MHz RFID SPI Reader"]
-    KEYPAD_ROWS <==> KEYPAD_HW["4x4 Matrix Membrane Keypad"]
-    KEYPAD_COLS <==> KEYPAD_HW
-    SERVO_PIN ==> SERVO_HW["Micro Servo Lock Actuator (0° Locked / 90° Unlocked)"]
-    MOTOR_PINS ==> MOTOR_HW["Dual H-Bridge L298N (4-Motor Getaway Chassis)"]
-    STATUS_PINS ==> IND_HW["Status LEDs (Green/Red) & Active Buzzer"]
+    subgraph ESP32_Right["ESP32 Right Header"]
+        P_VIN["VIN (5V Rail)"]
+        P_GND2["GND"]
+        P_D13["GPIO 13 (D13)"]
+        P_D12["GPIO 12 (D12)"]
+        P_D14["GPIO 14 (D14)"]
+        P_D27["GPIO 27 (D27)"]
+        P_D26["GPIO 26 (D26)"]
+        P_D25["GPIO 25 (D25)"]
+        P_D33["GPIO 33 (D33)"]
+        P_D32["GPIO 32 (D32)"]
+    end
+
+    subgraph Keypad["4x4 Membrane Keypad"]
+        KR1["Row 1 (Pin 1)"]
+        KR2["Row 2 (Pin 2)"]
+        KR3["Row 3 (Pin 3)"]
+        KR4["Row 4 (Pin 4)"]
+        KC1["Col 1 (Pin 5)"]
+        KC2["Col 2 (Pin 6)"]
+        KC3["Col 3 (Pin 7)"]
+        KC4["Col 4 (Pin 8)"]
+    end
+
+    subgraph RFID["RC522 RFID Reader (SPI)"]
+        R_SDA["SDA / SS"]
+        R_SCK["SCK"]
+        R_MOSI["MOSI"]
+        R_MISO["MISO"]
+        R_RST["RST"]
+        R_VCC["3.3V VCC"]
+        R_GND["GND"]
+    end
+
+    subgraph Indicators["AV Signaling"]
+        LED_GREEN["Green LED (+ 220Ω Resistor)"]
+        LED_RED["Red LED (+ 220Ω Resistor)"]
+        BUZZER["Active Buzzer (5V / PWM)"]
+    end
+
+    subgraph LockActuator["Lock Mechanism"]
+        SERVO_SIG["Servo Signal (Orange)"]
+        SERVO_PWR["Servo VCC (Red) -> VIN 5V"]
+        SERVO_GND["Servo GND (Brown/Black)"]
+    end
+
+    subgraph MotorDriver["L298N Dual H-Bridge Driver"]
+        L_IN1["IN1 (Left Forward)"]
+        L_IN2["IN2 (Left Reverse)"]
+        L_IN3["IN3 (Jumpered to IN1)"]
+        L_IN4["IN4 (Jumpered to IN2)"]
+        L_VS["+12V / VS (12V Supply +)"]
+        L_GND["GND (Common Ground)"]
+        L_ENA["ENA (Jumper Installed)"]
+        L_ENB["ENB (Jumper Installed)"]
+        L_OUT12["OUT1 & OUT2 (Left Motor Bank)"]
+        L_OUT34["OUT3 & OUT4 (Right Motor Bank)"]
+    end
+
+    subgraph Motors["4-Motor Getaway Chassis"]
+        LM12["Left Motors 1 & 2 (Parallel)"]
+        RM12["Right Motors 1 & 2 (Parallel)"]
+    end
+
+    %% Keypad Interconnects
+    P_D13 --- KR1
+    P_D12 --- KR2
+    P_D14 --- KR3
+    P_D27 --- KR4
+    P_D26 --- KC1
+    P_D25 --- KC2
+    P_D33 --- KC3
+    P_D32 --- KC4
+
+    %% RFID Interconnects
+    P_D5 --- R_SDA
+    P_D18 --- R_SCK
+    P_D23 --- R_MOSI
+    P_D19 --- R_MISO
+    P_D4 --- R_RST
+    P_3V3 --- R_VCC
+    P_GND1 --- R_GND
+
+    %% Status Indicators
+    P_D22 --- LED_GREEN
+    P_D15 --- LED_RED
+    P_D21 --- BUZZER
+
+    %% Servo Actuator
+    P_D2 --- SERVO_SIG
+    P_VIN --- SERVO_PWR
+    P_GND2 --- SERVO_GND
+
+    %% L298N Motor Driver
+    P_GPIO16 --- L_IN1
+    P_GPIO17 --- L_IN2
+    L_IN1 -.->|Jumper| L_IN3
+    L_IN2 -.->|Jumper| L_IN4
+    P_GND1 --- L_GND
+    L_OUT12 ==> LM12
+    L_OUT34 ==> RM12
 ```
 
 ## 🏛️ Physical Hardware Architecture
